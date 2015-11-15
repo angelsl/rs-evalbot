@@ -1,0 +1,9 @@
+[package]
+name = "evalbot"
+version = "0.1.0"
+authors = ["angelsl <hidingfromhidden@gmail.com>"]
+
+[dependencies]
+irc = ">= 0.9.1"
+toml = ">= 0.1.23"
+rustc-serialize = ">= 0.3.16"
