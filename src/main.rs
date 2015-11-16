@@ -195,7 +195,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq
                 let line = format!("{}{}", if work.is_channel { &cfg.chan_output_prefix as &str } else { "" }, line);
                 send_msg!(dest, &line);
             }
-            if max_lines <= result.len() {
+            if max_lines < result.len() {
                 send_msg!(dest, "(output truncated)");
             }
         }
