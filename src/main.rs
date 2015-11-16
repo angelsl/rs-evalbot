@@ -138,7 +138,7 @@ fn main() {{
         Ok(x) => x,
         Err(x) => return x
     };
-    let stdout = stdout.replace("\u{FF}", "");
+    let stdout = stdout.replace("\u{FFFD}", "");
     let mut out = String::new();
     for line in stdout.lines() {
         out.push_str(&format!("stdout: {}\n", line));
