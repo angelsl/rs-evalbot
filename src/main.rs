@@ -182,7 +182,10 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq
     }
     loop {
         has_work.acquire();
-        if let Some(work) = requests.lock().unwrap().pop_front() {
+        let mut rvec = requests.lock().unwrap();
+        let work = rvec.pop_front();
+        std::mem::drop(rvec);
+        if let Some(work) = work {
             let result = evaluate(&work.code, cfg.playpen_timeout);
             let result = wrap_output(&result,
                                      if work.is_channel { cfg.max_channel_line_len }
