@@ -1,0 +1,15 @@
+max_channel_lines = 2
+max_channel_line_len = 200
+playpen_timeout = 20
+eval_threads = 4
+chan_output_prefix = ">"
+
+[irc_config]
+owners = [""]
+nickname = ""
+server = "irc.not-valid.net"
+port = 6697
+use_ssl = true
+channels = [""]
+encoding = "UTF-8"
+nick_password = ""
