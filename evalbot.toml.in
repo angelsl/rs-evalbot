@@ -1,8 +1,10 @@
 max_channel_lines = 2
 max_channel_line_len = 200
+max_priv_lines = 10
 playpen_timeout = 20
 eval_threads = 4
 chan_output_prefix = ">"
+sandbox_dir = "sandbox"
 
 [irc_config]
 owners = [""]
