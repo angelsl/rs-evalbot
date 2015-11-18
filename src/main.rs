@@ -1,43 +1,18 @@
 #![feature(semaphore)]
 
 extern crate irc;
-extern crate toml;
 extern crate rustc_serialize;
+extern crate toml;
+
+mod playpen;
+mod cfg;
+mod util;
 
 use irc::client::prelude::*;
-
-#[derive(Clone, RustcDecodable, RustcEncodable, Default, PartialEq, Debug)]
-struct EvalbotCfg {
-    pub chan_output_prefix: String,
-    pub sandbox_dir: String,
-    pub max_channel_lines: usize,
-    pub max_channel_line_len: usize,
-    pub max_priv_lines: usize,
-    pub playpen_timeout: usize,
-    pub eval_threads: usize,
-    pub irc_config: Config
-}
-
-unsafe impl Send for EvalbotCfg {}
-
-fn read_cfg() -> Result<EvalbotCfg, String> {
-    use std::io::prelude::*;
-    use std::fs::File;
-    use rustc_serialize::Decodable;
-
-    let mut f = try!(File::open("evalbot.toml")
-                     .map_err(|x| format!("could not open evalbot.toml: {}", x)));
-    let mut s = String::new();
-
-    try!(f.read_to_string(&mut s)
-         .map_err(|x| format!("could not read evalbot.toml: {}", x)));
-
-    let value = try!(s.parse::<toml::Value>()
-                     .map_err(|x| format!("could not parse evalbot.toml: {:?}", x)));
-
-    EvalbotCfg::decode(&mut toml::Decoder::new(value))
-         .map_err(|x| format!("could not decode evalbot.toml: {}", x))
-}
+use std::sync::{Arc, Mutex, Semaphore};
+use std::thread;
+use std::collections::VecDeque;
+use cfg::EvalbotCfg;
 
 #[derive(Debug)]
 struct EvalReq {
@@ -47,10 +22,6 @@ struct EvalReq {
     pub target: String,
     pub code: String
 }
-
-use std::sync::{Arc, Mutex, Semaphore};
-use std::thread;
-use std::collections::VecDeque;
 
 #[cfg(not(unix))]
 fn evaluate(code: &str, _: &str, _: usize) -> String {
@@ -62,40 +33,8 @@ fn evaluate(code: &str, _: &str, _: usize) -> String {
 }
 
 #[cfg(unix)]
-fn playpen_exec(sandbox: &str, command: &str, args: &[&str], input: &str, timeout: usize) -> Result<(String, String), String> {
-    use std::process::{Command,Stdio};
-    use std::io::Write;
-    let mut child = try!(Command::new("sudo")
-        .arg("playpen")
-        .arg(sandbox)
-        .arg("--mount-proc")
-        .arg("--user=rust")
-        .arg(format!("--timeout={}", timeout))
-        .arg("--syscalls-file=whitelist")
-        .arg("--devices=/dev/urandom:r,/dev/null:w")
-        .arg("--memory-limit=128")
-        .arg("--")
-        .arg(command)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn().map_err(|x| format!("couldn't playpen_exec; {}", x)));
-    if let Some(ref mut x) = child.stdin { 
-        try!(x.write_all(input.as_bytes())
-             .map_err(|x| format!("couldn't write to stdin; {}", x)));
-    } else {
-        return Err("no stdin?".to_owned());
-    }
-    let output = try!(child.wait_with_output().
-                      map_err(|x| format!("wait_with_output failed; {}", x)));
-    Ok((String::from_utf8_lossy(&output.stdout).into_owned(), 
-     String::from_utf8_lossy(&output.stderr).into_owned()))
-}
-
-#[cfg(unix)]
 fn evaluate(code: &str, sandbox: &str, timeout: usize) -> String {
-    let (stdout, stderr) = match playpen_exec(sandbox, "/usr/local/bin/evaluate.sh",
+    let (stdout, stderr) = match playpen::exec(sandbox, "/usr/local/bin/evaluate.sh",
                                         &["-C","opt-level=2"],
                                         &code,
                                         timeout) {
@@ -135,37 +74,6 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq
         };
     }
 
-    fn wrap_output<'a>(input: &'a str, max_len: usize) -> Vec<&'a str> {
-        let mut ret = vec![];
-        for line in input.lines() {
-            let line = line.trim();
-            if line.len() <= max_len {
-                ret.push(line);
-            } else {
-                let mut leftover = line;
-                while let Some((idx, _)) = leftover.char_indices().nth(max_len) {
-                    let (part, after) = leftover.split_at(idx);
-                    ret.push(part);
-                    leftover = after;
-                }
-                if leftover.len() > 0 {
-                    ret.push(leftover);
-                }
-            }
-        }
-        ret
-    }
-
-    fn truncate_output<'a>(mut input: Vec<&'a str>, max_lines: usize) -> (bool, Vec<&'a str>) {
-        let max_lines = std::cmp::min(max_lines, input.len());
-        if max_lines < input.len() {
-            input.truncate(max_lines);
-            (true, input)
-        } else {
-            (false, input)
-        }
-    }
-
     loop {
         has_work.acquire();
         let mut rvec = requests.lock().unwrap();
@@ -174,12 +82,14 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq
         if let Some(work) = work {
             let code = if work.raw { work.code } else { expr_to_program(&work.code) };
             let result = evaluate(&code, &cfg.sandbox_dir, cfg.playpen_timeout);
-            let result = wrap_output(&result,
+            let result = util::wrap_output(&result,
                                      if work.is_channel { cfg.max_channel_line_len }
                                      else { 425 });
+
             // TODO: gist the overflow
             let max_lines = if work.is_channel { cfg.max_channel_lines } else { cfg.max_priv_lines };
-            let result = truncate_output(result, max_lines);
+            let result = util::truncate_output(result, max_lines);
+
             let dest = if work.is_channel { &work.target } else { &work.sender };
             for line in result.1.iter() {
                 let line = format!("{}{}", if work.is_channel { &cfg.chan_output_prefix as &str } else { "" }, line);
@@ -223,7 +133,7 @@ fn parse_msg(message: &Message) -> Option<EvalReq> {
 }
 
 fn main() {
-    let config = match read_cfg() {
+    let config = match cfg::read("evalbot.toml") {
         Ok(x) => x,
         Err(x) => panic!("could not read config; {}", x)
     };
