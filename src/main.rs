@@ -7,81 +7,34 @@ extern crate toml;
 mod playpen;
 mod cfg;
 mod util;
+mod eval;
 
 use irc::client::prelude::*;
 use std::sync::{Arc, Mutex, Semaphore};
 use std::thread;
 use std::collections::VecDeque;
+
 use cfg::EvalbotCfg;
+use eval::Req;
 
-#[derive(Debug)]
-struct EvalReq {
-    pub raw: bool,
-    pub is_channel: bool,
-    pub sender: String,
-    pub target: String,
-    pub code: String
-}
-
-#[cfg(not(unix))]
-fn evaluate(code: &str, _: &str, _: usize) -> String {
-    if let Ok(x) = code.parse::<usize>() {
-        std::iter::repeat("X").take(x).collect::<String>()
-    } else {
-        "not a number".to_owned()
-    }
-}
-
-#[cfg(unix)]
-fn evaluate(code: &str, sandbox: &str, timeout: usize) -> String {
-    let (stdout, stderr) = match playpen::exec(sandbox, "/usr/local/bin/evaluate.sh",
-                                        &["-C","opt-level=2"],
-                                        &code,
-                                        timeout) {
-        Ok(x) => x,
-        Err(x) => return x
+macro_rules! send_msg {
+    ($conn:expr, $dest:expr, $line:expr) => {
+        match $conn.send_privmsg($dest, $line) {
+            Err(x) => println!("failed to send message: {}", x),
+            _ => ()
+        }
     };
-    let stdout = stdout.replace("\u{FFFD}", "");
-    let mut out = String::new();
-    for line in stdout.lines() {
-        out.push_str(&format!("stdout: {}\n", line));
-    }
-    for line in stderr.lines() {
-        out.push_str(&format!("stderr: {}\n", line));
-    }
-    out
 }
 
-fn expr_to_program(expr: &str) -> String {
-    format!(
-r#"#![allow(dead_code, unused_variables)]
-fn show<T: std::fmt::Debug>(e: T) {{ println!("{{:?}}", e) }}
-fn main() {{
-    show({{
-        {}
-    }});
-}}"#, expr)
-}
-
-fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq>>>, has_work: Arc<Semaphore>, cfg: Arc<EvalbotCfg>) -> !
+fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<Req>>>, has_work: Arc<Semaphore>, cfg: Arc<EvalbotCfg>) -> !
     where T: IrcRead, U: IrcWrite, S: ServerExt<'a, T, U> + Sized {
-    macro_rules! send_msg {
-        ($dest:expr, $line:expr) => {
-            match conn.send_privmsg($dest, $line) {
-                Err(x) => println!("failed to send message: {}", x),
-                _ => ()
-            }
-        };
-    }
-
     loop {
         has_work.acquire();
         let mut rvec = requests.lock().unwrap();
         let work = rvec.pop_front();
         std::mem::drop(rvec);
         if let Some(work) = work {
-            let code = if work.raw { work.code } else { expr_to_program(&work.code) };
-            let result = evaluate(&code, &cfg.sandbox_dir, cfg.playpen_timeout);
+            let result = eval::eval(&work, &cfg.sandbox_dir, cfg.playpen_timeout);
             let result = util::wrap_output(&result,
                                      if work.is_channel { cfg.max_channel_line_len }
                                      else { 425 });
@@ -93,16 +46,16 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<EvalReq
             let dest = if work.is_channel { &work.target } else { &work.sender };
             for line in result.1.iter() {
                 let line = format!("{}{}", if work.is_channel { &cfg.chan_output_prefix as &str } else { "" }, line);
-                send_msg!(dest, &line);
+                send_msg!(conn, dest, &line);
             }
             if result.0 {
-                send_msg!(dest, "(output truncated)");
+                send_msg!(conn, dest, "(output truncated)");
             }
         }
     }
 }
 
-fn parse_msg(message: &Message) -> Option<EvalReq> {
+fn parse_msg(message: &Message) -> Option<Req> {
     let sender = message.get_source_nickname().unwrap_or("");
     if let Ok(Command::PRIVMSG(target, message)) = message.into() {
         let in_channel = target.starts_with('#');
@@ -112,21 +65,21 @@ fn parse_msg(message: &Message) -> Option<EvalReq> {
         }
 
         let tok: Vec<&str> = message.trim().splitn(2, '>').collect();
-        // in channel: rust[raw]>code...
-        // in private message: [raw>]code...
-        let raw = match (in_channel, tok[0]) {
-            (true, "rust") => false,
-            (true, "rustraw") => true,
-            (false, "raw") => true,
-            (false, _) => false,
+        match tok.len() {
+            2 => (),
             _ => return None
         };
-        let code = if !raw && !in_channel {
-            &message as &str
-        } else {
-            match tok.get(1) { Some(x) => *x, None => return None }
+        let lang = match tok[0].parse::<eval::Lang>() {
+            Ok(x) => x,
+            Err(_) => return None
         };
-        Some(EvalReq { raw: raw, is_channel: in_channel, sender: sender.to_owned(), target: target.to_owned(), code: code.to_owned() })
+        Some(Req { 
+            is_channel: in_channel,
+            sender: sender.to_owned(),
+            target: target.to_owned(),
+            code: tok[1].to_owned(),
+            language: lang
+        })
     } else {
         None
     }
@@ -161,8 +114,9 @@ fn main() {
                 }
             };
 
-            if let Some(x) = parse_msg(&msg) {
-                println!("{} @ {} (raw: {}): {}", x.sender, x.target, x.raw, x.code);
+            let req = parse_msg(&msg);
+            if let Some(x) = req {
+                println!("{} @ {} {:?}: {}", x.sender, x.target, x.language, x.code);
                 evalreqs.lock().unwrap().push_back(x); // if mutex is poisoned, just bail
                 has_work.release();
             }
