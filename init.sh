@@ -42,20 +42,6 @@ arch-chroot sandbox useradd -m rust
 curl -L https://static.rust-lang.org/rustup.sh | \
     arch-chroot sandbox /usr/bin/sh -s - --prefix=/ --channel=nightly --yes --disable-sudo
 
-cat <<EOF > sandbox/usr/local/bin/evaluate.sh
-#!/usr/bin/dash
-
-set -o errexit
-
-rustc - -o ./out "\$@"
-printf '\377' # 255 in octal
-exec ./out
-EOF
-chmod a+x sandbox/usr/local/bin/evaluate.sh
-
 arch-chroot sandbox pacman -Rcs --noconfirm file gawk tar sed
 arch-chroot sandbox pacman -Scc --noconfirm
-
-mksquashfs sandbox sandbox.sqfs
-echo "Done; leaving sandbox/ here, you may want to delete it"
 
