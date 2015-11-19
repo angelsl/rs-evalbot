@@ -35,6 +35,10 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<Req>>>,
         std::mem::drop(rvec);
         if let Some(work) = work {
             let result = eval::eval(&work, &cfg.sandbox_dir, cfg.playpen_timeout);
+            let (result, err) = match result {
+                Ok(x) => (x, false),
+                Err(x) => (x, true)
+            };
             let result = util::wrap_output(&result,
                                      if work.is_channel { cfg.max_channel_line_len }
                                      else { 425 });
@@ -45,7 +49,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<Req>>>,
 
             let dest = if work.is_channel { &work.target } else { &work.sender };
             for line in result.1.iter() {
-                let line = format!("{}{}", if work.is_channel { &cfg.chan_output_prefix as &str } else { "" }, line);
+                let line = format!("{}{}", if work.is_channel && !err { &cfg.chan_output_prefix as &str } else { "" }, line);
                 send_msg!(conn, dest, &line);
             }
             if result.0 {

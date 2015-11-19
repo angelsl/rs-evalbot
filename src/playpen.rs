@@ -2,6 +2,7 @@ use std::process::{Command,Stdio,Child};
 use std::io::Write;
 
 pub fn spawn(sandbox: &str, command: &str, syscalls: &str, args: &[&str], timeout: usize) -> Result<Child, String> {
+    use std::os::unix::io::{FromRawFd,RawFd};
     Command::new("sudo")
         .arg("playpen")
         .arg(sandbox)
@@ -16,11 +17,11 @@ pub fn spawn(sandbox: &str, command: &str, syscalls: &str, args: &[&str], timeou
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(unsafe { Stdio::from_raw_fd(1 as RawFd) })
         .spawn().map_err(|x| format!("couldn't playpen_exec; {}", x))
 }
 
-pub fn exec_wait(sandbox: &str, command: &str, syscalls: &str, args: &[&str], input: &str, timeout: usize) -> Result<(String, String), String> {
+pub fn exec_wait(sandbox: &str, command: &str, syscalls: &str, args: &[&str], input: &str, timeout: usize) -> Result<String, String> {
     let mut child = try!(spawn(sandbox, command, syscalls, args, timeout));
     if let Some(ref mut x) = child.stdin { 
         try!(x.write_all(input.as_bytes())
@@ -30,6 +31,5 @@ pub fn exec_wait(sandbox: &str, command: &str, syscalls: &str, args: &[&str], in
     }
     let output = try!(child.wait_with_output().
                       map_err(|x| format!("wait_with_output failed; {}", x)));
-    Ok((String::from_utf8_lossy(&output.stdout).into_owned(), 
-     String::from_utf8_lossy(&output.stderr).into_owned()))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
