@@ -11,7 +11,8 @@ pub struct Req {
 pub enum Lang {
     Rust,
     RustRaw,
-    CSharp
+    CSharp,
+    Python
 }
 
 impl ::std::str::FromStr for Lang {
@@ -22,6 +23,7 @@ impl ::std::str::FromStr for Lang {
             "rust" | "rs" => Ok(Lang::Rust),
             "rust!" | "rs!" => Ok(Lang::RustRaw),
             "csharp" | "cs" => Ok(Lang::CSharp),
+            "python" | "py" => Ok(Lang::Python),
             _ => Err(())
         }
     }
@@ -31,7 +33,8 @@ pub fn eval(req: &Req, sandbox_path: &str, timeout: usize) -> Result<String, Str
     match req.language {
         Lang::Rust => rust::eval(&req.code, sandbox_path, timeout, false),
         Lang::RustRaw => rust::eval(&req.code, sandbox_path, timeout, true),
-        Lang::CSharp => csharp::eval(&req.code, sandbox_path, timeout)
+        Lang::CSharp => csharp::eval(&req.code, sandbox_path, timeout),
+        Lang::Python => python::eval(&req.code, sandbox_path, timeout),
     }
 }
 
@@ -82,11 +85,29 @@ mod csharp {
     pub fn eval(_: &str, _: &str, _: usize) -> Result<String, String> {
         Ok("not implemented".to_owned())
     }
+
     #[cfg(unix)]
     pub fn eval(code: &str, sandbox: &str, timeout: usize) -> Result<String, String> {
         playpen::exec_wait(sandbox, "/usr/bin/mono", "mono_syscalls",
                            &["/usr/lib/mono/4.5/csharp.exe"],
                            &format!("{}\nquit\n", code),
+                           timeout)
+    }
+}
+
+mod python {
+    use playpen;
+
+    #[cfg(not(unix))]
+    pub fn eval(_: &str, _: &str, _: usize) -> Result<String, String> {
+        Ok("not implemented".to_owned())
+    }
+
+    #[cfg(unix)]
+    pub fn eval(code: &str, sandbox: &str, timeout: usize) -> Result<String, String> {
+        playpen::exec_wait(sandbox, "/usr/bin/python", "python_syscalls",
+                           &["-ic", "import sys;sys.ps1='';sys.ps2=''"],
+                           &format!("{}\nquit()\n", code.trim()),
                            timeout)
     }
 }
