@@ -115,12 +115,17 @@ namespace CSEval {
             }
         }
 
-        private Tuple<string, bool, object> EvaluateHelper(string input) {
-            bool result_set;
-            object result;
+        private Tuple<string, bool, object> EvaluateHelper(string input, CancellationToken canceller) {
+            try {
+                using (canceller.Register(Thread.CurrentThread.Abort)) {
+                    bool result_set;
+                    object result;
 
-            input = evaluator.Evaluate(input, out result, out result_set);
-            return Tuple.Create(input, result_set, result);
+                    input = evaluator.Evaluate(input, out result, out result_set);
+                    return Tuple.Create(input, result_set, result);
+                }
+            } catch (ThreadAbortException) {}
+            return null;
         }
 
         private string Evaluate(string input, int timeout, ref string output) {
@@ -128,18 +133,26 @@ namespace CSEval {
             object result;
 
             Driver.Output.GetStringBuilder().Clear();
+            
+            CancellationTokenSource canceller = new CancellationTokenSource();
 
             try {
-                Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input));
+                Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input, canceller.Token), canceller.Token);
                 if (timeout == 0 || t.Wait(timeout)) {
                     Tuple<string, bool, object> resultTuple = t.Result;
-                    input = resultTuple.Item1;
-                    result_set = resultTuple.Item2;
-                    result = resultTuple.Item3;
-                    if (result_set) {
-                        PrettyPrinter.PrettyPrint(Driver.Output, result);
+                    if (resultTuple != null) {
+                        input = resultTuple.Item1;
+                        result_set = resultTuple.Item2;
+                        result = resultTuple.Item3;
+                        if (result_set) {
+                            PrettyPrinter.PrettyPrint(Driver.Output, result);
+                        }
+                    } else {
+                        output = "(timed out... probably?)";
+                        return null;
                     }
                 } else {
+                    canceller.Cancel();
                     output = "(timed out)";
                     return null;
                 }
