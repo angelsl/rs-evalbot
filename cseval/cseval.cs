@@ -35,8 +35,12 @@ using Mono.CSharp;
 namespace CSEval {
 
     public class Driver {
+        private static readonly StringWriter sw = new StringWriter();
+
+        public static StringWriter Output => sw;
+
         static int Main(string[] args) {
-            var cmd = new CommandLineParser(Console.Out);
+            var cmd = new CommandLineParser(Console.Error);
 
             // Enable unsafe code by default
             var settings = new CompilerSettings() {
@@ -45,6 +49,9 @@ namespace CSEval {
 
             if (!cmd.ParseArguments(settings, args))
                 return 1;
+
+            Console.SetOut(Output);
+            Console.SetError(Output);
 
             ReportPrinter printer = new ConsoleReportPrinter();
 
@@ -120,13 +127,8 @@ namespace CSEval {
             bool result_set;
             object result;
 
-            try {
-                Console.Out.Dispose();
-                Console.Error.Dispose();
-            } catch {}
-            StringWriter sw = new StringWriter();
-            Console.SetOut(sw);
-            Console.SetError(sw);
+            Driver.Output.GetStringBuilder().Clear();
+
             try {
                 Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input));
                 if (timeout == 0 || t.Wait(timeout)) {
@@ -135,18 +137,20 @@ namespace CSEval {
                     result_set = resultTuple.Item2;
                     result = resultTuple.Item3;
                     if (result_set) {
-                        PrettyPrinter.PrettyPrint(sw, result);
-                        output = sw.ToString();
+                        PrettyPrinter.PrettyPrint(Driver.Output, result);
                     }
                 } else {
                     output = "(timed out)";
                     return null;
                 }
             } catch (Exception e) {
-                output = e.ToString();
+                Driver.Output.WriteLine(e.ToString());
+                output = Driver.Output.ToString();
                 return null;
             }
-
+            if (Driver.Output.GetStringBuilder().Length > 0) {
+                output = Driver.Output.ToString();
+            }
             return input;
         }
     }
