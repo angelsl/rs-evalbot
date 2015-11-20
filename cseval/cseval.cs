@@ -32,7 +32,7 @@ using System.Collections.Generic;
 
 using Mono.CSharp;
 
-namespace Mono {
+namespace CSEval {
 
 	public class Driver {
 		static int Main(string[] args) {
@@ -76,6 +76,7 @@ namespace Mono {
 		private void ReturnWork(bool success, string result) {
 			output.WriteByte((byte) (success ? 1 : 0));
 			output.WriteLengthUTF8(result);
+            output.Flush();
 		}
 
 		private void InitializeUsing() {
@@ -154,17 +155,25 @@ namespace Mono {
 			}
 		}
 
-		public unsafe static string ReadUTF8(this Stream s, int l) {
+		public static string ReadUTF8(this Stream s, int l) {
 			byte[] bytes = new byte[l];
 			s.Read(bytes, 0, l);
-			return Encoding.UTF8.GetString(bytes);
+            try {
+    			return Encoding.UTF8.GetString(bytes);
+            } catch {
+                return ""; // blah.
+            }
 		}
 
-		public unsafe static string ReadLengthUTF8(this Stream s) {
+		public static string ReadLengthUTF8(this Stream s) {
 			return s.ReadUTF8(s.ReadInt32());
 		}
 
 		public unsafe static void WriteLengthUTF8(this Stream s, string d) {
+            if (d == null) {
+                d = "";
+            }
+
 			byte[] strBytes = Encoding.UTF8.GetBytes(d);
 			byte[] len = new byte[4];
 
