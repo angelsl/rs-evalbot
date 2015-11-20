@@ -135,7 +135,7 @@ namespace CSEval {
 
             try {
                 Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input, canceller.Token), canceller.Token);
-                canceller.CancelAfter(timeout);
+                if (timeout != 0) canceller.CancelAfter(timeout);
                 if (timeout == 0 || t.Wait(timeout)) {
                     Tuple<string, bool, object> resultTuple = t.Result;
                     if (resultTuple != null) {
