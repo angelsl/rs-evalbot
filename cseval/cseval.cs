@@ -121,6 +121,13 @@ namespace CSEval {
             object result;
 
             try {
+                Console.Out.Dispose();
+                Console.Error.Dispose();
+            } catch {}
+            StringWriter sw = new StringWriter();
+            Console.SetOut(sw);
+            Console.SetError(sw);
+            try {
                 Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input));
                 if (timeout == 0 || t.Wait(timeout)) {
                     Tuple<string, bool, object> resultTuple = t.Result;
@@ -128,7 +135,6 @@ namespace CSEval {
                     result_set = resultTuple.Item2;
                     result = resultTuple.Item3;
                     if (result_set) {
-                        StringWriter sw = new StringWriter();
                         PrettyPrinter.PrettyPrint(sw, result);
                         output = sw.ToString();
                     }
