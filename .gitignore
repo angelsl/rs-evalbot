@@ -1,4 +1,4 @@
-target
-openssl
+/evalbot/target
+/evalbot/run
 evalbot.toml
 
