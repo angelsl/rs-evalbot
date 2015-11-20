@@ -1,8 +1,10 @@
 #![feature(semaphore)]
+#![feature(read_exact)]
 
 extern crate irc;
 extern crate rustc_serialize;
 extern crate toml;
+extern crate byteorder;
 
 mod playpen;
 mod cfg;
@@ -26,15 +28,33 @@ macro_rules! send_msg {
     };
 }
 
-fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, requests: Arc<Mutex<VecDeque<Req>>>, has_work: Arc<Semaphore>, cfg: Arc<EvalbotCfg>) -> !
+#[derive(Clone)]
+struct State {
+    requests: Arc<Mutex<VecDeque<Req>>>,
+    has_work: Arc<Semaphore>,
+    cfg: Arc<EvalbotCfg>,
+    csharp_evaluator: eval::csharp::Evaluator
+}
+
+fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
     where T: IrcRead, U: IrcWrite, S: ServerExt<'a, T, U> + Sized {
+    let has_work = state.has_work;
+    let cfg = state.cfg;
+    let requests = state.requests;
     loop {
-        has_work.acquire();
-        let mut rvec = requests.lock().unwrap();
-        let work = rvec.pop_front();
-        std::mem::drop(rvec);
+        let work;
+        {
+            has_work.acquire();
+            let mut rvec = requests.lock().unwrap();
+            work = rvec.pop_front();
+            std::mem::drop(rvec);
+        }
+
         if let Some(work) = work {
-            let result = eval::eval(&work, &cfg.sandbox_dir, cfg.playpen_timeout);
+            let result = match work.language { 
+                eval::Lang::CSharp => eval::eval_csharp(&work, cfg.playpen_timeout, &state.csharp_evaluator),
+                _ => eval::eval(&work, &cfg.sandbox_dir, cfg.playpen_timeout)
+            };
             let (result, err) = match result {
                 Ok(x) => (x, false),
                 Err(x) => (x, true)
@@ -100,12 +120,16 @@ fn main() {
     let config = Arc::new(config);
     let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
     let has_work = Arc::new(Semaphore::new(0));
-    for _ in 0..config.eval_threads {
+    let state = State {
+        csharp_evaluator: eval::csharp::start_worker(&config.sandbox_dir),
+        cfg: config,
+        requests: evalreqs,
+        has_work: has_work
+    };
+    for _ in 0..state.cfg.eval_threads {
         let conn = conn.clone();
-        let evalreqs = evalreqs.clone();
-        let has_work = has_work.clone();
-        let config = config.clone();
-        thread::spawn(move || { evaluate_loop(conn, evalreqs, has_work, config.clone()); });
+        let state = state.clone();
+        thread::spawn(move || { evaluate_loop(conn, state); });
     }
     loop {
         conn.identify().unwrap();
@@ -121,8 +145,8 @@ fn main() {
             let req = parse_msg(&msg);
             if let Some(x) = req {
                 println!("{} @ {} {:?}: {}", x.sender, x.target, x.language, x.code);
-                evalreqs.lock().unwrap().push_back(x); // if mutex is poisoned, just bail
-                has_work.release();
+                state.requests.lock().unwrap().push_back(x); // if mutex is poisoned, just bail
+                state.has_work.release();
             }
         }
         conn.reconnect().unwrap();

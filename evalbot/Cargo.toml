@@ -7,3 +7,4 @@ authors = ["angelsl <hidingfromhidden@gmail.com>"]
 irc = ">= 0.9.1"
 toml = ">= 0.1.23"
 rustc-serialize = ">= 0.3.16"
+byteorder = ">= 0.4.2"
