@@ -114,7 +114,7 @@ pub mod csharp {
         macro_rules! try_io {
             ($x:expr) => {
                 match $x {
-                    Err(x) => panic!(x),
+                    Err(x) => { println!("couldn't communicate with cseval: {:?}", x); break; },
                     Ok(x) => x
                 }
             }
@@ -128,12 +128,12 @@ pub mod csharp {
             std::mem::drop(rvec);
             
             if let Some(work) = work {
-                try_io!(stdin.write_i32::<NativeEndian>(work.1 as i32));
+                try_io!(stdin.write_i32::<NativeEndian>((work.1*1000) as i32));
                 let bytes = work.0.as_bytes();
                 try_io!(stdin.write_i32::<NativeEndian>(bytes.len() as i32));
                 try_io!(stdin.write_all(bytes));
                 try_io!(stdin.flush());
-
+                
                 let success = try_io!(stdout.read_u8()) == 1;
                 let result_len = try_io!(stdout.read_i32::<NativeEndian>());
                 let mut result_bytes = vec![0u8; result_len as usize];
@@ -147,14 +147,18 @@ pub mod csharp {
         }
     }
 
+    fn spawn_child(sandbox: &str) -> Result<Child, String> {
+        playpen::spawn(sandbox, "/usr/bin/mono", "mono_syscalls",
+                       &["/usr/local/bin/cseval.exe"],
+                       None,
+                       false)
+    }
+
     pub fn start_worker(sandbox: &str) -> Evaluator {
-        let child = playpen::spawn(sandbox, "/usr/bin/mono", "mono_syscalls",
-                                   &["/usr/local/bin/cseval.exe"],
-                                   None,
-                                   false);
+        let child = spawn_child(sandbox).unwrap();
         let ret = Evaluator::new();
         let (queue, has_work) = (ret.queue.clone(), ret.has_work.clone());
-        thread::spawn(move || { worker(child.unwrap(), queue, has_work); });
+        thread::spawn(move || { worker(child, queue, has_work); });
         ret
     }
 
@@ -182,9 +186,9 @@ pub mod csharp {
         };
         
         if result.0 {
-            Err(result.1)
-        } else {
             Ok(result.1)
+        } else {
+            Err(result.1)
         }
     }
 }

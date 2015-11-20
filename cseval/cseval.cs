@@ -91,19 +91,19 @@ namespace CSEval {
 				int timeout = input.ReadInt32();
 				string work = GetWork().Trim();
 
-				if (work == "")
+				if (work == "") {
+					ReturnWork(true, "");
 					continue;
+				}
 
 				expr = expr == null ? work : expr + "\n" + work;
 				string output = null;
 				expr = Evaluate(expr, timeout, ref output);
 
-				if (output != null) { // exception or result
-					ReturnWork(true, expr);
+				if (output != null || expr == null) { // exception or result
+					ReturnWork(true, output ?? "");
 				} else if (output == null && expr != null) { // continuation
 					ReturnWork(false, "(continue...)");
-				} else {
-					ReturnWork(false, "(something wrong happened)");
 				}
 			}
 			return 0;
