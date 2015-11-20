@@ -169,6 +169,12 @@ pub mod csharp {
 
     #[cfg(unix)]
     pub fn eval(code: &str, timeout: usize, eval: &Evaluator) -> Result<String, String> {
+        if code.contains("OpenStandardOutput")
+            || code.contains("OpenStandardInput")
+            || code.contains("OpenStandardError") {
+            // prevent evaluated code from hijacking the stream :/
+            return Err("don't use Console.OpenStandard*".to_owned());
+        }
         let (tx, rx) = mpsc::channel();
         let queue = eval.queue.clone();
         let has_work = eval.has_work.clone();
