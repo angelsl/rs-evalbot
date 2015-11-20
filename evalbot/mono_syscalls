@@ -2,6 +2,7 @@ access
 arch_prctl
 brk
 clock_getres
+clock_nanosleep
 clone
 close
 execve
@@ -16,6 +17,7 @@ getdents
 getegid
 geteuid
 getrlimit
+getrusage
 ioctl
 lseek
 lstat
@@ -26,6 +28,7 @@ mprotect
 munmap
 nanosleep
 open
+prctl
 read
 readlink
 rt_sigaction
