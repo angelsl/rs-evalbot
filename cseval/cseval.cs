@@ -106,7 +106,6 @@ namespace CSEval {
                     ReturnWork(false, "(continue...)");
                 }
             }
-            return 0;
         }
 
         private Tuple<string, bool, object> EvaluateHelper(string input) {
