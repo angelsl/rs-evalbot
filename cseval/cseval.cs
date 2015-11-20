@@ -116,16 +116,13 @@ namespace CSEval {
         }
 
         private Tuple<string, bool, object> EvaluateHelper(string input, CancellationToken canceller) {
-            try {
-                using (canceller.Register(Thread.CurrentThread.Abort)) {
-                    bool result_set;
-                    object result;
+            using (canceller.Register(Thread.CurrentThread.Abort)) {
+                bool result_set;
+                object result;
 
-                    input = evaluator.Evaluate(input, out result, out result_set);
-                    return Tuple.Create(input, result_set, result);
-                }
-            } catch (ThreadAbortException) {}
-            return null;
+                input = evaluator.Evaluate(input, out result, out result_set);
+                return Tuple.Create(input, result_set, result);
+            }
         }
 
         private string Evaluate(string input, int timeout, ref string output) {
@@ -138,6 +135,7 @@ namespace CSEval {
 
             try {
                 Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input, canceller.Token), canceller.Token);
+                canceller.CancelAfter(timeout);
                 if (timeout == 0 || t.Wait(timeout)) {
                     Tuple<string, bool, object> resultTuple = t.Result;
                     if (resultTuple != null) {
@@ -152,7 +150,6 @@ namespace CSEval {
                         return null;
                     }
                 } else {
-                    canceller.Cancel();
                     output = "(timed out)";
                     return null;
                 }

@@ -34,6 +34,7 @@ readlink
 rt_sigaction
 rt_sigprocmask
 rt_sigreturn
+rt_sigsuspend
 sched_getaffinity
 sched_yield
 select
@@ -42,6 +43,7 @@ set_tid_address
 sigaltstack
 stat
 statfs
+tgkill
 uname
 unlink
 write
