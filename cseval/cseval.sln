@@ -1,0 +1,17 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "cseval", "cseval.csproj", "{DEBA3FD5-ADF9-4F76-9B13-E449AC345D0F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|AnyCPU = Debug|AnyCPU
+		Release|AnyCPU = Release|AnyCPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DEBA3FD5-ADF9-4F76-9B13-E449AC345D0F}.Debug|AnyCPU.ActiveCfg = Debug|AnyCPU
+		{DEBA3FD5-ADF9-4F76-9B13-E449AC345D0F}.Debug|AnyCPU.Build.0 = Debug|AnyCPU
+		{DEBA3FD5-ADF9-4F76-9B13-E449AC345D0F}.Release|AnyCPU.ActiveCfg = Release|AnyCPU
+		{DEBA3FD5-ADF9-4F76-9B13-E449AC345D0F}.Release|AnyCPU.Build.0 = Release|AnyCPU
+	EndGlobalSection
+EndGlobal
