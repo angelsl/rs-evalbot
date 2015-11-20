@@ -87,7 +87,7 @@ namespace CSEval {
         public int Run() {
             InitializeUsing();
             string expr = null;
-            while (!InteractiveBase.QuitRequested) {
+            while (true) {
                 int timeout = input.ReadInt32();
                 string work = GetWork().Trim();
 
