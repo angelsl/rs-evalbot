@@ -14,7 +14,7 @@ mod eval;
 use irc::client::prelude::*;
 use std::sync::{Arc, Mutex, Semaphore};
 use std::thread;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
 use cfg::EvalbotCfg;
 use eval::Req;
@@ -33,7 +33,7 @@ struct State {
     requests: Arc<Mutex<VecDeque<Req>>>,
     has_work: Arc<Semaphore>,
     cfg: Arc<EvalbotCfg>,
-    csharp_evaluator: eval::csharp::Evaluator
+    evaluators: Arc<HashMap<eval::Lang, Box<eval::Evaluator>>>
 }
 
 fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
@@ -51,10 +51,9 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
         }
 
         if let Some(work) = work {
-            let result = match work.language { 
-                eval::Lang::CSharp => eval::eval_csharp(&work, cfg.playpen_timeout, &state.csharp_evaluator),
-                _ => eval::eval(&work, &cfg.sandbox_dir, cfg.playpen_timeout)
-            };
+            let result = state.evaluators.get(&work.language).unwrap()
+                .eval(&work.code, &cfg.sandbox_dir, cfg.playpen_timeout);
+
             let (result, err) = match result {
                 Ok(x) => (x, false),
                 Err(x) => (x, true)
@@ -120,11 +119,19 @@ fn main() {
     let config = Arc::new(config);
     let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
     let has_work = Arc::new(Semaphore::new(0));
+    
+    let mut evaluators = HashMap::new();
+    evaluators.insert(eval::Lang::Rust, eval::evaluator(eval::Lang::Rust, &config.sandbox_dir));
+    evaluators.insert(eval::Lang::RustRaw, eval::evaluator(eval::Lang::RustRaw, &config.sandbox_dir));
+    evaluators.insert(eval::Lang::Python, eval::evaluator(eval::Lang::Python, &config.sandbox_dir));
+    evaluators.insert(eval::Lang::CSharp, eval::evaluator(eval::Lang::CSharp, &config.sandbox_dir));    
+    let evaluators = Arc::new(evaluators);
+
     let state = State {
-        csharp_evaluator: eval::csharp::start_worker(&config.sandbox_dir),
         cfg: config,
         requests: evalreqs,
-        has_work: has_work
+        has_work: has_work,
+        evaluators: evaluators
     };
     for _ in 0..state.cfg.eval_threads {
         let conn = conn.clone();
