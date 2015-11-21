@@ -1,10 +1,11 @@
-use std::sync::{mpsc, Arc, Mutex, Semaphore};
-use byteorder::{ReadBytesExt, WriteBytesExt, NativeEndian};
-use std::thread;
-use std::io::{Read, Write};
-use std::collections::VecDeque;
-use std::process::{Child, ChildStdin, ChildStdout};
 use std;
+use std::collections::VecDeque;
+use std::io::{Read, Write};
+use std::process::{Command, Child, ChildStdin, ChildStdout, ExitStatus};
+use std::sync::{mpsc, Arc, Mutex, Semaphore};
+use std::thread;
+
+use byteorder::{ReadBytesExt, WriteBytesExt, NativeEndian};
 use eval::Evaluator;
 
 #[derive(Clone)]
@@ -99,13 +100,11 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
     };    
 
     if let &Request::Work { ref code, timeout, ref reporter } = work {
-        println!("got work, sending");
         try_io!(stdin.write_i32::<NativeEndian>((timeout*1000) as i32), reporter);
         let bytes = code.as_bytes();
         try_io!(stdin.write_i32::<NativeEndian>(bytes.len() as i32), reporter);
         try_io!(stdin.write_all(bytes), reporter);
         try_io!(stdin.flush(), reporter);
-        println!("sent work");
         
         let (tx, rx) = mpsc::channel();
 
@@ -122,9 +121,9 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
         }
 
         { // timeout
-            let timeout = timeout;
+            let timeout = (timeout as f64 * 1.5) as u64;
             thread::spawn(move || {
-                thread::sleep(::std::time::Duration::new(timeout as u64, 0));
+                thread::sleep(::std::time::Duration::new(timeout, 0));
                 match tx.send(Err(Output { success: false, output: "timed out waiting for evaluator response".to_owned() })) { _ => () };
             });
         }
@@ -137,7 +136,7 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
             Ok(x) => x,
             Err(x) => { err = true; x }
         };
-        println!("got response");
+
         // we'll just ignore this error, not going to restart child
         match reporter.send(result) {
             Ok(_) => (),
@@ -190,9 +189,22 @@ fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc
             }
         }
         println!("killing persistent child pid {}", evaluator.id());
-        match evaluator.kill() { Err(x) => println!("failed to kill: {:?}", x), _ => () };
+        match sudo_kill(evaluator.id()) {
+            Err(x) => println!("failed to kill {}: {}", evaluator.id(), x),
+            Ok(x) => println!("kill result: {:?}", x)
+        };
         if terminate { break; }
     }
+}
+
+fn sudo_kill(pid: u32) -> Result<ExitStatus, String> {
+    try!(Command::new("sudo")
+        .args(&["kill", "-KILL"])
+        .arg(format!("{}", pid))
+        .spawn()
+        .map_err(|x| format!("couldn't spawn sudo kill: {:?}", x)))
+        .wait()
+        .map_err(|x| format!("couldn't SIGKILL: {:?}", x))
 }
 
 pub fn new<F>(childfn: F) -> PersistentEvaluator

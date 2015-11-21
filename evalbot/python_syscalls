@@ -1,9 +1,11 @@
 access
 arch_prctl
 brk
+clone
 close
 dup
 exit_group
+execve
 fcntl
 fstat
 futex
@@ -22,6 +24,8 @@ mmap
 mprotect
 munmap
 open
+pipe2
+poll
 read
 readlink
 rename
@@ -30,6 +34,8 @@ rt_sigprocmask
 set_robust_list
 set_tid_address
 sigaltstack
+socketpair
 stat
 unlink
+wait4
 write

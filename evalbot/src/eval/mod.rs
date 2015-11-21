@@ -35,7 +35,7 @@ pub fn evaluator(lang: Lang, sandbox: &str) -> Box<Evaluator> {
     match lang {
         Lang::Rust => Box::new(rust::RustEvaluator { raw: false }),
         Lang::RustRaw => Box::new(rust::RustEvaluator { raw: true }),
-        Lang::Python => Box::new(python::PythonEvaluator { nothing: () }),
+        Lang::Python => Box::new(python::evaluator(sandbox)),
         Lang::CSharp => Box::new(csharp::evaluator(sandbox))
     }
 }
@@ -45,7 +45,24 @@ pub trait Evaluator: Send + Sync + 'static {
 }
 
 mod persistent;
-mod csharp;
+mod csharp {
+    use playpen;
+    use std::process::Child;
+    use eval::persistent;
+
+    fn spawn_child(sandbox: &str) -> Child {
+        playpen::spawn(sandbox, "/usr/bin/mono", "mono_syscalls",
+                       &["/usr/local/bin/cseval.exe"],
+                       None,
+                       false).unwrap()
+    }
+
+    pub fn evaluator(sandbox: &str) -> persistent::PersistentEvaluator {
+        let sandbox = sandbox.to_owned();
+        persistent::new(move || { spawn_child(&sandbox) })
+    }
+}
+
 mod rust {
     use playpen;
     use eval::Evaluator;
@@ -93,22 +110,18 @@ exec ./out"#;
 
 mod python {
     use playpen;
-    use eval::Evaluator;
+    use std::process::Child;
+    use eval::persistent;
 
-    pub struct PythonEvaluator { pub nothing: () }
+    fn spawn_child(sandbox: &str) -> Child {
+        playpen::spawn(sandbox, "/usr/bin/python", "python_syscalls",
+                       &["/usr/local/bin/pyeval.py"],
+                       None,
+                       false).unwrap()
+    }
 
-    impl Evaluator for PythonEvaluator {
-        #[cfg(not(unix))]
-        fn eval(&self, _: &str, _: &str, _: usize) -> Result<String, String> {
-            Err("not implemented".to_owned())
-        }
-
-        #[cfg(unix)]
-        fn eval(&self, code: &str, sandbox: &str, timeout: usize) -> Result<String, String> {
-            playpen::exec_wait(sandbox, "/usr/bin/python", "python_syscalls",
-                               &["-ic", "import sys;sys.ps1='';sys.ps2=''"],
-                               &format!("{}\nquit()\n", code.trim()),
-                               timeout)
-        }
+    pub fn evaluator(sandbox: &str) -> persistent::PersistentEvaluator {
+        let sandbox = sandbox.to_owned();
+        persistent::new(move || { spawn_child(&sandbox) })
     }
 }
