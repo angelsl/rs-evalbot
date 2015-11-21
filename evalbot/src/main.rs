@@ -58,21 +58,34 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
                 Ok(x) => (x, false),
                 Err(x) => (x, true)
             };
+
+            let dest = if work.is_channel { &work.target } else { &work.sender };
+
+            if result.len() == 0 {
+                send_msg!(conn, dest, "ok (no output)");
+                continue;
+            }
+
             let result = util::wrap_output(&result,
                                      if work.is_channel { cfg.max_channel_line_len }
                                      else { 425 });
 
-            // TODO: gist the overflow
             let max_lines = if work.is_channel { cfg.max_channel_lines } else { cfg.max_priv_lines };
-            let result = util::truncate_output(result, max_lines);
-
-            let dest = if work.is_channel { &work.target } else { &work.sender };
-            for line in result.1.iter() {
-                let line = format!("{}{}", if work.is_channel && !err { &cfg.chan_output_prefix as &str } else { "" }, line);
+            let (truncated, result) = util::truncate_output(result, max_lines);
+            let iter = result.iter().take(if truncated {
+                // truncated: we take up to the 2nd last line, as we add "... (output truncated)"
+                // to the last line
+                result.len() - 1
+            } else {
+                result.len()
+            });
+            let prefix = if work.is_channel && !err { &cfg.chan_output_prefix as &str } else { "" };
+            for line in iter {
+                let line = format!("{}{}", prefix, line);
                 send_msg!(conn, dest, &line);
             }
-            if result.0 {
-                send_msg!(conn, dest, "(output truncated)");
+            if truncated {
+                send_msg!(conn, dest, &format!("{}{}... (output truncated)", prefix, result.last().unwrap()));
             }
         }
     }
