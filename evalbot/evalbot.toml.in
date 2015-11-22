@@ -1,29 +1,46 @@
+# maximum number of output lines to channel
 max_channel_lines = 2
+# maximum length of each line output to channel; excess is wrapped
+# note that wrapped lines are considered for the maximum lines
 max_channel_line_len = 200
+# maximum number of output lines in privmsg
 max_priv_lines = 10
+# timeout in seconds for each invocation
 playpen_timeout = 20
+# number of threads to process evaluation requests
 eval_threads = 4
+# prefix for output to channel (to prevent interaction with other bots)
 chan_output_prefix = ">"
+# $rehash, $restart <lang>
 command_prefix = "$"
+# only these people can use those commands
 owners = [""]
+# path to your sandbox, relative to where you start evalbot or absolute
 sandbox_dir = "sandbox"
 
 [[languages]]
+# long and short name; rust> or rs> will both be accepted by the bot
 long_name = "rust"
 short_name = "rs"
+# path to syscalls file, relative or absolute like sandbox_dir
 syscalls_path = "rust_syscalls"
+# absolute path to binary IN THE SANDBOX
 binary_path = "/usr/bin/dash"
+# arguments to pass
 binary_args = ["-c", '''
 set -o errexit
 rustc - -o ./out "$@"
 exec ./out
 ''', "evaluate", "-C", "opt-level=2"]
+# whether this is a daemon/repl (persistent) or compile-and-run (not)
 persistent = false
+# optional, string to prepend before input
 code_before = '''
 #![allow(dead_code, unused_variables)]
 fn show<T: std::fmt::Debug>(e: T) { println!("{:?}", e) }
 fn main() {
     show({'''
+# optional, string to append after input
 code_after = '''
     });
 }'''

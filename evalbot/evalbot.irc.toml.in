@@ -1,3 +1,4 @@
+# see https://aatxe.github.io/irc/irc/client/data/config/struct.Config.html
 owners = [""]
 nickname = "evaluator"
 server = "irc.not-real.net"
