@@ -33,17 +33,16 @@ unsafe impl Send for EvalbotCfg {}
 unsafe impl Send for LangCfg {}
 
 pub fn read<T>(name: &str) -> Result<T, String>
-    where T : Decodable {
-    let mut f = try!(File::open(name)
-                     .map_err(|x| format!("could not open {}: {}", name, x)));
+    where T: Decodable {
+    let mut f = try!(File::open(name).map_err(|x| format!("could not open {}: {}", name, x)));
     let mut s = String::new();
 
     try!(f.read_to_string(&mut s)
-         .map_err(|x| format!("could not read {}: {}", name, x)));
+          .map_err(|x| format!("could not read {}: {}", name, x)));
 
     let value = try!(s.parse::<toml::Value>()
-                     .map_err(|x| format!("could not parse {}: {:?}", name, x)));
+                      .map_err(|x| format!("could not parse {}: {:?}", name, x)));
 
     T::decode(&mut toml::Decoder::new(value))
-         .map_err(|x| format!("could not decode {}: {}", name, x))
+        .map_err(|x| format!("could not decode {}: {}", name, x))
 }

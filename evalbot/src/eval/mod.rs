@@ -19,9 +19,15 @@ fn wrap_code(raw: &str, cfg: &cfg::LangCfg) -> String {
 pub mod script {
     use {cfg, eval, playpen};
 
-    pub fn eval(raw: &str, cfg: &cfg::LangCfg, sandbox: &str, timeout: usize) -> Result<String, String> {
+    pub fn eval(raw: &str,
+                cfg: &cfg::LangCfg,
+                sandbox: &str,
+                timeout: usize)
+                -> Result<String, String> {
         let code = eval::wrap_code(raw, cfg);
-        playpen::exec_wait(&sandbox, &cfg.binary_path, &cfg.syscalls_path,
+        playpen::exec_wait(&sandbox,
+                           &cfg.binary_path,
+                           &cfg.syscalls_path,
                            &cfg.binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
                            &code,
                            timeout)

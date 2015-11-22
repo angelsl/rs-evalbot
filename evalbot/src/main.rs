@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex, Semaphore};
 use std::thread;
 use std::collections::{VecDeque, HashMap};
 
-use cfg::{EvalbotCfg,LangCfg};
-use eval::{script,persistent};
+use cfg::{EvalbotCfg, LangCfg};
+use eval::{script, persistent};
 
 macro_rules! send_msg {
     ($conn:expr, $dest:expr, $line:expr) => {
@@ -76,7 +76,9 @@ impl State {
 }
 
 fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
-    where T: IrcRead, U: IrcWrite, S: ServerExt<'a, T, U> + Sized {
+    where T: IrcRead,
+          U: IrcWrite,
+          S: ServerExt<'a, T, U> + Sized {
     let has_work = state.has_work;
     let cfg = state.cfg;
     let requests = state.requests;
@@ -91,15 +93,20 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
 
         if let Some(WorkerMessage::Req(work)) = work {
             let result = if work.language.persistent {
-                state.evaluators.get(&work.language.long_name).unwrap()
-                    .eval(&work.code, cfg.playpen_timeout)
+                state.evaluators
+                     .get(&work.language.long_name)
+                     .unwrap()
+                     .eval(&work.code, cfg.playpen_timeout)
             } else {
-                script::eval(&work.code, &*work.language, &cfg.sandbox_dir, cfg.playpen_timeout)
+                script::eval(&work.code,
+                             &*work.language,
+                             &cfg.sandbox_dir,
+                             cfg.playpen_timeout)
             };
 
             let (result, err) = match result {
                 Ok(x) => (x, false),
-                Err(x) => (x, true)
+                Err(x) => (x, true),
             };
 
             let dest = if work.is_channel { &work.target } else { &work.sender };
@@ -110,25 +117,38 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
             }
 
             let result = util::wrap_output(&result,
-                                     if work.is_channel { cfg.max_channel_line_len }
-                                     else { 425 });
+                                           if work.is_channel {
+                                               cfg.max_channel_line_len
+                                           } else {
+                                               425
+                                           });
 
-            let max_lines = if work.is_channel { cfg.max_channel_lines } else { cfg.max_priv_lines };
+            let max_lines = if work.is_channel {
+                cfg.max_channel_lines
+            } else {
+                cfg.max_priv_lines
+            };
             let (truncated, result) = util::truncate_output(result, max_lines);
             let iter = result.iter().take(if truncated {
-                // truncated: we take up to the 2nd last line, as we add "... (output truncated)"
-                // to the last line
+            // truncated: we take up to the 2nd last line, as we add "... (output truncated)"
+            // to the last line
                 result.len() - 1
             } else {
                 result.len()
             });
-            let prefix = if work.is_channel && !err { &cfg.chan_output_prefix as &str } else { "" };
+            let prefix = if work.is_channel && !err {
+                &cfg.chan_output_prefix as &str
+            } else {
+                ""
+            };
             for line in iter {
                 let line = format!("{}{}", prefix, line);
                 send_msg!(conn, dest, &line);
             }
             if truncated {
-                send_msg!(conn, dest, &format!("{}{}... (output truncated)", prefix, result.last().unwrap()));
+                send_msg!(conn,
+                          dest,
+                          &format!("{}{}... (output truncated)", prefix, result.last().unwrap()));
             }
         } else if let Some(WorkerMessage::Terminate) = work {
             println!("got rehashing message; terminating");
@@ -138,12 +158,15 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
 }
 
 fn parse_command(message: &str, prefix: &str) -> Option<CommandResult> {
-    let tok: Vec<&str> = match message.splitn(2, prefix).nth(1)
-        .map(|x| x.split(' ').collect()) {
-            Some(x) => x,
-            None => return None
-        };
-    if tok.is_empty() { return None; }
+    let tok: Vec<&str> = match message.splitn(2, prefix)
+                                      .nth(1)
+                                      .map(|x| x.split(' ').collect()) {
+        Some(x) => x,
+        None => return None,
+    };
+    if tok.is_empty() {
+        return None;
+    }
     match tok[0] {
         "rehash" => Some(CommandResult::Rehash),
         "restart" => {
@@ -152,8 +175,8 @@ fn parse_command(message: &str, prefix: &str) -> Option<CommandResult> {
             } else {
                 Some(CommandResult::RestartEvaluator(tok[1].to_owned()))
             }
-        },
-        _ => None
+        }
+        _ => None,
     }
 }
 
@@ -165,7 +188,7 @@ fn parse_msg(message: &Message, state: &State) -> Option<(CommandResult, String)
             // we don't accept code via CTCP
             return None;
         }
-        
+
         if state.cfg.owners.iter().any(|x| *x == sender) {
             if let Some(cmd) = parse_command(&message, &state.cfg.command_prefix) {
                 return Some((cmd, sender.to_owned()));
@@ -175,18 +198,19 @@ fn parse_msg(message: &Message, state: &State) -> Option<(CommandResult, String)
         let tok: Vec<&str> = message.trim().splitn(2, '>').collect();
         match tok.len() {
             2 => (),
-            _ => return None
+            _ => return None,
         };
 
         let language = state.languages.get(tok[0]);
         if let Some(language) = language {
-            Some((CommandResult::Req(Req { 
+            Some((CommandResult::Req(Req {
                 is_channel: in_channel,
                 sender: sender.to_owned(),
                 target: target.to_owned(),
                 code: tok[1].to_owned(),
                 language: language.clone()
-            }), sender.to_owned()))
+            }),
+                  sender.to_owned()))
         } else {
             None
         }
@@ -198,7 +222,7 @@ fn parse_msg(message: &Message, state: &State) -> Option<(CommandResult, String)
 fn main() {
     let irc_config = match cfg::read("evalbot.irc.toml") {
         Ok(x) => x,
-        Err(x) => panic!("could not read irc config; {}", x)
+        Err(x) => panic!("could not read irc config; {}", x),
     };
     println!("read irc config: {:?}", irc_config);
 
@@ -208,7 +232,7 @@ fn main() {
         'connection: loop {
             let config = Arc::new(match cfg::read::<EvalbotCfg>("evalbot.toml") {
                 Ok(x) => x,
-                Err(x) => panic!("could not read config; {}", x)
+                Err(x) => panic!("could not read config; {}", x),
             });
             println!("read config: {:?}", config);
             let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
@@ -223,16 +247,19 @@ fn main() {
                     let syscalls_path = lang.syscalls_path.clone();
                     let binary_args = lang.binary_args.clone();
                     let childfn = move || {
-                        playpen::spawn(&sandbox, &binary_path, &syscalls_path,
+                        playpen::spawn(&sandbox,
+                                       &binary_path,
+                                       &syscalls_path,
                                        &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
                                        None,
-                                       false).unwrap()
+                                       false)
+                            .unwrap()
                     };
                     evaluators.insert(lang.long_name.clone(), persistent::new(childfn));
                 }
                 let lang = Arc::new(lang);
                 languages.insert(lang.short_name.clone(), lang.clone());
-                languages.insert(lang.long_name.clone(), lang);        
+                languages.insert(lang.long_name.clone(), lang);
             }
             let languages = Arc::new(languages);
             let evaluators = Arc::new(evaluators);
@@ -248,7 +275,9 @@ fn main() {
             for _ in 0..state.cfg.eval_threads {
                 let conn = conn.clone();
                 let state = state.clone();
-                thread::spawn(move || { evaluate_loop(conn, state); });
+                thread::spawn(move || {
+                    evaluate_loop(conn, state);
+                });
             }
 
             for maybe_msg in conn.iter() {
@@ -259,7 +288,7 @@ fn main() {
                         break 'connection;
                     }
                 };
-                
+
                 let req = parse_msg(&msg, &state);
                 if let Some((x, sender)) = req {
                     println!("{:?}", (&x, &sender));
@@ -274,13 +303,18 @@ fn main() {
                             }
                             send_notice!(conn, &sender, "rehashing");
                             break;
-                        },
+                        }
                         CommandResult::RestartEvaluator(lang) => {
                             if let Some(lang) = state.languages.get(&lang) {
-                                send_notice!(conn, &sender, match state.evaluators.get(&lang.long_name) {
-                                    Some(x) => { x.restart(); "restarting evaluator" }
-                                    None => "this language's not persistent"
-                                });
+                                send_notice!(conn,
+                                             &sender,
+                                             match state.evaluators.get(&lang.long_name) {
+                                                 Some(x) => {
+                                                     x.restart();
+                                                     "restarting evaluator"
+                                                 }
+                                                 None => "this language's not persistent",
+                                             });
                             } else {
                                 send_notice!(conn, &sender, "invalid language name");
                             }
