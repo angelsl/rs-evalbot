@@ -45,3 +45,12 @@ curl -L https://static.rust-lang.org/rustup.sh | \
 arch-chroot sandbox pacman -Rcs --noconfirm file gawk tar sed
 arch-chroot sandbox pacman -Scc --noconfirm
 
+echo <<EOF
+you may wish to build and/or copy cseval.exe and pyeval.exe into
+the sandbox, and place the appropriate path in the configuration
+
+if you are enabling the C# evaluator, install mono
+if you are enabling the Python evaluator, install python
+
+done.
+EOF
