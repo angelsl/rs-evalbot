@@ -1,0 +1,8 @@
+owners = [""]
+nickname = "evaluator"
+server = "irc.not-real.net"
+port = 6697
+use_ssl = true
+channels = ["#channel"]
+encoding = "UTF-8"
+nick_password = ""
