@@ -8,7 +8,6 @@ pub fn spawn(sandbox: &str,
              timeout: Option<usize>,
              merge_stderr: bool)
              -> Result<Child, String> {
-    use std::os::unix::io::{FromRawFd, RawFd};
     let mut cmd = Command::new("sudo");
     cmd.arg("playpen")
        .arg(sandbox)
@@ -26,7 +25,7 @@ pub fn spawn(sandbox: &str,
        .stdin(Stdio::piped())
        .stdout(Stdio::piped());
     if merge_stderr {
-        cmd.stderr(unsafe { Stdio::from_raw_fd(1 as RawFd) });
+        cmd.stderr(Stdio::piped());
     } else {
         cmd.stderr(Stdio::inherit());
     }
@@ -49,5 +48,9 @@ pub fn exec_wait(sandbox: &str,
     }
     let output = try!(child.wait_with_output()
                            .map_err(|x| format!("wait_with_output failed; {}", x)));
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok({
+        let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
+        if !out.ends_with("\n") { out.push_str("\n"); }
+        out.push_str(&*String::from_utf8_lossy(&output.stderr));
+        out})
 }
