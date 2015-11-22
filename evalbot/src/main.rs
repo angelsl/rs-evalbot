@@ -1,5 +1,7 @@
 #![feature(semaphore)]
 #![feature(read_exact)]
+#![feature(plugin)]
+#![plugin(clippy)]
 
 extern crate irc;
 extern crate rustc_serialize;
@@ -16,27 +18,64 @@ use std::sync::{Arc, Mutex, Semaphore};
 use std::thread;
 use std::collections::{VecDeque, HashMap};
 
-use cfg::EvalbotCfg;
-use eval::Req;
+use cfg::{EvalbotCfg,LangCfg};
+use eval::{script,persistent};
 
 macro_rules! send_msg {
     ($conn:expr, $dest:expr, $line:expr) => {
-        match $conn.send_privmsg($dest, $line) {
-            Err(x) => println!("failed to send message: {}", x),
-            _ => ()
+        if let Err(x) = $conn.send_privmsg($dest, $line) {
+            println!("failed to send message: {}", x)
         }
     };
 }
 
-#[derive(Clone)]
-struct State {
-    requests: Arc<Mutex<VecDeque<Req>>>,
-    has_work: Arc<Semaphore>,
-    cfg: Arc<EvalbotCfg>,
-    evaluators: Arc<HashMap<eval::Lang, Box<eval::Evaluator>>>
+macro_rules! send_notice {
+    ($conn:expr, $dest:expr, $line:expr) => {
+        if let Err(x) = $conn.send_notice($dest, $line) {
+            println!("failed to send notice: {}", x)
+        }
+    };
 }
 
-fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
+#[derive(Debug)]
+struct Req {
+    pub is_channel: bool,
+    pub sender: String,
+    pub target: String,
+    pub code: String,
+    pub language: Arc<LangCfg>
+}
+
+#[derive(Debug)]
+enum CommandResult {
+    Req(Req),
+    Rehash,
+    RestartEvaluator(String)
+}
+
+#[derive(Debug)]
+enum WorkerMessage {
+    Req(Req),
+    Terminate
+}
+
+#[derive(Clone)]
+struct State {
+    requests: Arc<Mutex<VecDeque<WorkerMessage>>>,
+    has_work: Arc<Semaphore>,
+    cfg: Arc<EvalbotCfg>,
+    languages: Arc<HashMap<String, Arc<LangCfg>>>,
+    evaluators: Arc<HashMap<String, eval::persistent::Evaluator>>
+}
+
+impl State {
+    fn send_message(&self, x: WorkerMessage) {
+        self.requests.lock().unwrap().push_back(x); // if mutex is poisoned, just bail
+        self.has_work.release();
+    }
+}
+
+fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
     where T: IrcRead, U: IrcWrite, S: ServerExt<'a, T, U> + Sized {
     let has_work = state.has_work;
     let cfg = state.cfg;
@@ -50,9 +89,13 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
             std::mem::drop(rvec);
         }
 
-        if let Some(work) = work {
-            let result = state.evaluators.get(&work.language).unwrap()
-                .eval(&work.code, &cfg.sandbox_dir, cfg.playpen_timeout);
+        if let Some(WorkerMessage::Req(work)) = work {
+            let result = if work.language.persistent {
+                state.evaluators.get(&work.language.long_name).unwrap()
+                    .eval(&work.code, cfg.playpen_timeout)
+            } else {
+                script::eval(&work.code, &*work.language, &cfg.sandbox_dir, cfg.playpen_timeout)
+            };
 
             let (result, err) = match result {
                 Ok(x) => (x, false),
@@ -61,7 +104,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
 
             let dest = if work.is_channel { &work.target } else { &work.sender };
 
-            if result.len() == 0 {
+            if result.is_empty() {
                 send_msg!(conn, dest, "ok (no output)");
                 continue;
             }
@@ -87,11 +130,34 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State) -> !
             if truncated {
                 send_msg!(conn, dest, &format!("{}{}... (output truncated)", prefix, result.last().unwrap()));
             }
+        } else if let Some(WorkerMessage::Terminate) = work {
+            println!("got rehashing message; terminating");
+            break;
         }
     }
 }
 
-fn parse_msg(message: &Message) -> Option<Req> {
+fn parse_command(message: &str, prefix: &str) -> Option<CommandResult> {
+    let tok: Vec<&str> = match message.splitn(2, prefix).nth(1)
+        .map(|x| x.split(' ').collect()) {
+            Some(x) => x,
+            None => return None
+        };
+    if tok.is_empty() { return None; }
+    match tok[0] {
+        "rehash" => Some(CommandResult::Rehash),
+        "restart" => {
+            if tok.len() < 2 {
+                None
+            } else {
+                Some(CommandResult::RestartEvaluator(tok[1].to_owned()))
+            }
+        },
+        _ => None
+    }
+}
+
+fn parse_msg(message: &Message, state: &State) -> Option<(CommandResult, String)> {
     let sender = message.get_source_nickname().unwrap_or("");
     if let Ok(Command::PRIVMSG(target, message)) = message.into() {
         let in_channel = target.starts_with('#');
@@ -99,74 +165,128 @@ fn parse_msg(message: &Message) -> Option<Req> {
             // we don't accept code via CTCP
             return None;
         }
+        
+        if state.cfg.owners.iter().any(|x| *x == sender) {
+            if let Some(cmd) = parse_command(&message, &state.cfg.command_prefix) {
+                return Some((cmd, sender.to_owned()));
+            }
+        }
 
         let tok: Vec<&str> = message.trim().splitn(2, '>').collect();
         match tok.len() {
             2 => (),
             _ => return None
         };
-        let lang = match tok[0].parse::<eval::Lang>() {
-            Ok(x) => x,
-            Err(_) => return None
-        };
-        Some(Req { 
-            is_channel: in_channel,
-            sender: sender.to_owned(),
-            target: target.to_owned(),
-            code: tok[1].to_owned(),
-            language: lang
-        })
+
+        let language = state.languages.get(tok[0]);
+        if let Some(language) = language {
+            Some((CommandResult::Req(Req { 
+                is_channel: in_channel,
+                sender: sender.to_owned(),
+                target: target.to_owned(),
+                code: tok[1].to_owned(),
+                language: language.clone()
+            }), sender.to_owned()))
+        } else {
+            None
+        }
     } else {
         None
     }
 }
 
 fn main() {
-    let config = match cfg::read("evalbot.toml") {
+    let irc_config = match cfg::read("evalbot.irc.toml") {
         Ok(x) => x,
-        Err(x) => panic!("could not read config; {}", x)
+        Err(x) => panic!("could not read irc config; {}", x)
     };
-    println!("read config: {:?}", config);
+    println!("read irc config: {:?}", irc_config);
 
-    let conn = Arc::new(IrcServer::from_config(config.irc_config.clone()).unwrap());
-    let config = Arc::new(config);
-    let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
-    let has_work = Arc::new(Semaphore::new(0));
-    
-    let mut evaluators = HashMap::new();
-    evaluators.insert(eval::Lang::Rust, eval::evaluator(eval::Lang::Rust, &config.sandbox_dir));
-    evaluators.insert(eval::Lang::RustRaw, eval::evaluator(eval::Lang::RustRaw, &config.sandbox_dir));
-    evaluators.insert(eval::Lang::Python, eval::evaluator(eval::Lang::Python, &config.sandbox_dir));
-    evaluators.insert(eval::Lang::CSharp, eval::evaluator(eval::Lang::CSharp, &config.sandbox_dir));    
-    let evaluators = Arc::new(evaluators);
-
-    let state = State {
-        cfg: config,
-        requests: evalreqs,
-        has_work: has_work,
-        evaluators: evaluators
-    };
-    for _ in 0..state.cfg.eval_threads {
-        let conn = conn.clone();
-        let state = state.clone();
-        thread::spawn(move || { evaluate_loop(conn, state); });
-    }
+    let conn = Arc::new(IrcServer::from_config(irc_config).unwrap());
     loop {
         conn.identify().unwrap();
-        for maybe_msg in conn.iter() {
-            let msg = match maybe_msg {
+        'connection: loop {
+            let config = Arc::new(match cfg::read::<EvalbotCfg>("evalbot.toml") {
                 Ok(x) => x,
-                Err(x) => {
-                    println!("{}, reconnecting", x);
-                    break
+                Err(x) => panic!("could not read config; {}", x)
+            });
+            println!("read config: {:?}", config);
+            let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
+            let has_work = Arc::new(Semaphore::new(0));
+
+            let mut languages = HashMap::new();
+            let mut evaluators = HashMap::new();
+            for lang in config.languages.clone() {
+                if lang.persistent {
+                    let sandbox = config.sandbox_dir.clone();
+                    let binary_path = lang.binary_path.clone();
+                    let syscalls_path = lang.syscalls_path.clone();
+                    let binary_args = lang.binary_args.clone();
+                    let childfn = move || {
+                        playpen::spawn(&sandbox, &binary_path, &syscalls_path,
+                                       &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
+                                       None,
+                                       false).unwrap()
+                    };
+                    evaluators.insert(lang.long_name.clone(), persistent::new(childfn));
                 }
+                let lang = Arc::new(lang);
+                languages.insert(lang.short_name.clone(), lang.clone());
+                languages.insert(lang.long_name.clone(), lang);        
+            }
+            let languages = Arc::new(languages);
+            let evaluators = Arc::new(evaluators);
+
+            let state = State {
+                cfg: config,
+                requests: evalreqs,
+                has_work: has_work,
+                languages: languages,
+                evaluators: evaluators
             };
 
-            let req = parse_msg(&msg);
-            if let Some(x) = req {
-                println!("{} @ {} {:?}: {}", x.sender, x.target, x.language, x.code);
-                state.requests.lock().unwrap().push_back(x); // if mutex is poisoned, just bail
-                state.has_work.release();
+            for _ in 0..state.cfg.eval_threads {
+                let conn = conn.clone();
+                let state = state.clone();
+                thread::spawn(move || { evaluate_loop(conn, state); });
+            }
+
+            for maybe_msg in conn.iter() {
+                let msg = match maybe_msg {
+                    Ok(x) => x,
+                    Err(x) => {
+                        println!("{}, reconnecting", x);
+                        break 'connection;
+                    }
+                };
+                
+                let req = parse_msg(&msg, &state);
+                if let Some((x, sender)) = req {
+                    println!("{:?}", (&x, &sender));
+                    match x {
+                        CommandResult::Req(req) => state.send_message(WorkerMessage::Req(req)),
+                        CommandResult::Rehash => {
+                            for _ in 0..state.cfg.eval_threads {
+                                state.send_message(WorkerMessage::Terminate);
+                            }
+                            for evaluator in state.evaluators.values() {
+                                evaluator.terminate();
+                            }
+                            send_notice!(conn, &sender, "rehashing");
+                            break;
+                        },
+                        CommandResult::RestartEvaluator(lang) => {
+                            if let Some(lang) = state.languages.get(&lang) {
+                                send_notice!(conn, &sender, match state.evaluators.get(&lang.long_name) {
+                                    Some(x) => { x.restart(); "restarting evaluator" }
+                                    None => "this language's not persistent"
+                                });
+                            } else {
+                                send_notice!(conn, &sender, "invalid language name");
+                            }
+                        }
+                    };
+                }
             }
         }
         conn.reconnect().unwrap();

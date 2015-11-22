@@ -1,6 +1,6 @@
 use std;
 
-pub fn wrap_output<'a>(input: &'a str, max_len: usize) -> Vec<&'a str> {
+pub fn wrap_output(input: &str, max_len: usize) -> Vec<&str> {
     let mut ret = vec![];
     for line in input.lines() {
         let line = line.trim();
@@ -21,7 +21,7 @@ pub fn wrap_output<'a>(input: &'a str, max_len: usize) -> Vec<&'a str> {
     ret
 }
 
-pub fn truncate_output<'a>(mut input: Vec<&'a str>, max_lines: usize) -> (bool, Vec<&'a str>) {
+pub fn truncate_output(mut input: Vec<&str>, max_lines: usize) -> (bool, Vec<&str>) {
     let max_lines = std::cmp::min(max_lines, input.len());
     if max_lines < input.len() {
         input.truncate(max_lines);

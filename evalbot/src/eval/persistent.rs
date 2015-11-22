@@ -6,10 +6,9 @@ use std::sync::{mpsc, Arc, Mutex, Semaphore};
 use std::thread;
 
 use byteorder::{ReadBytesExt, WriteBytesExt, NativeEndian};
-use eval::Evaluator;
 
 #[derive(Clone)]
-pub struct PersistentEvaluator {
+pub struct Evaluator {
     queue: Arc<Mutex<VecDeque<Request>>>,
     has_work: Arc<Semaphore>
 }
@@ -25,30 +24,28 @@ struct Output {
     output: String
 }
 
-impl PersistentEvaluator {
+impl Evaluator {
     fn new() -> Self {
-        PersistentEvaluator {
+        Evaluator {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             has_work: Arc::new(Semaphore::new(0))
         }
     }
-}
 
-impl Evaluator for PersistentEvaluator {
+    fn send_request(&self, req: Request) {
+        self.queue.lock().unwrap().push_back(req);
+        self.has_work.release();
+    }
+
     #[cfg(not(unix))]
-    fn eval(&self, _: &str, _: &str, _: usize) -> Result<String, String> {
+    pub fn eval(&self, _: &str, _: usize) -> Result<String, String> {
         Err("not implemented".to_owned())
     }
 
     #[cfg(unix)]
-    fn eval(&self, code: &str, _: &str, timeout: usize) -> Result<String, String> {
+    pub fn eval(&self, code: &str, timeout: usize) -> Result<String, String> {
         let (tx, rx) = mpsc::channel();
-        let ref queue = self.queue;
-        let ref has_work = self.has_work;
-
-        let work = Request::Work { code: code.to_owned(), timeout: timeout, reporter: tx };
-        queue.lock().unwrap().push_back(work);
-        has_work.release();
+        self.send_request(Request::Work { code: code.to_owned(), timeout: timeout, reporter: tx });
 
         let result = match rx.recv() {
             Ok(x) => x,
@@ -58,11 +55,20 @@ impl Evaluator for PersistentEvaluator {
             }
         };
 
+        // this basically controls whether the output is prefixed if it's in a channel
         if result.success {
             Ok(result.output)
         } else {
             Err(result.output)
         }
+    }
+
+    pub fn restart(&self) {
+        self.send_request(Request::Restart);
+    }
+
+    pub fn terminate(&self) {
+        self.send_request(Request::Terminate);
     }
 }
 
@@ -128,10 +134,19 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
             });
         }
         let mut err = false;
+
+        // this one receives from the two threads spawned above
+        // Ok means we got a message through the channel
+        // Err means both threads above died
         let result = match rx.recv() {
             Ok(x) => x,
             Err(_) => { err = true; Ok(Output { success: false, output: "couldn't receive result from communicator thread".to_owned() }) }
         };
+
+        // this one is the result from the threads
+        // Ok means we got the response from the sandboxed evaluator
+        // Err means we timed out on Rust end (if the evaluator timed out, it'll be
+        // Ok(Output { success: false, output: "timed out" }) or something like that
         let result = match result {
             Ok(x) => x,
             Err(x) => { err = true; x }
@@ -142,6 +157,9 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
             Ok(_) => (),
             Err(x) => println!("couldn't return result: {:?}", x)
         };
+
+        // returning Err here will make the loop in worker(..) break
+        // restarting the child
         if err { Err(()) } else { Ok(()) }
     } else {
         println!("worker_evaluate got something other than Request::Work");
@@ -151,6 +169,7 @@ fn worker_evaluate(stdin: &mut ChildStdin, stdout: Arc<Mutex<ChildStdout>>, work
 
 fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc<Semaphore>)
     where F : Fn() -> Child + Send + 'static {
+    use std::mem;
     let mut terminate;
     loop {
         let mut evaluator = childfn();
@@ -188,9 +207,12 @@ fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc
                 }
             }
         }
-        println!("killing persistent child pid {}", evaluator.id());
-        match sudo_kill(evaluator.id()) {
-            Err(x) => println!("failed to kill {}: {}", evaluator.id(), x),
+        let pid = evaluator.id();
+        println!("killing persistent child pid {}", pid);
+        match evaluator.kill() { _ => () };
+        mem::drop(evaluator);
+        match sudo_kill(pid) {
+            Err(x) => println!("failed to kill {}: {}", pid, x),
             Ok(x) => println!("kill result: {:?}", x)
         };
         if terminate { break; }
@@ -207,9 +229,9 @@ fn sudo_kill(pid: u32) -> Result<ExitStatus, String> {
         .map_err(|x| format!("couldn't SIGKILL: {:?}", x))
 }
 
-pub fn new<F>(childfn: F) -> PersistentEvaluator
+pub fn new<F>(childfn: F) -> Evaluator
     where F : Fn() -> Child + Send + 'static {
-    let ret = PersistentEvaluator::new();
+    let ret = Evaluator::new();
     let (queue, has_work) = (ret.queue.clone(), ret.has_work.clone());
     thread::spawn(move || { worker(childfn, queue, has_work); });
     ret
