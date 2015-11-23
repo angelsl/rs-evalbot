@@ -72,3 +72,11 @@ syscalls_path = "python_syscalls"
 binary_path = "/usr/bin/python"
 binary_args = ["/usr/local/bin/pyeval.py"]
 persistent = true
+
+[[languages]]
+long_name = "fsharp"
+short_name = "fs"
+syscalls_path = "mono_syscalls"
+binary_path = "/usr/bin/mono"
+binary_args = ["/usr/local/bin/fseval.exe"]
+persistent = true
