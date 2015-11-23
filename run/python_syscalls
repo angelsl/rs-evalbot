@@ -18,6 +18,7 @@ getrandom
 getrlimit
 getuid
 ioctl
+kill
 lseek
 lstat
 mmap
