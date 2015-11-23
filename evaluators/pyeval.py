@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import io, sys, struct, os
-from threading import Thread
+from multiprocessing import Process, Pipe
 from code import InteractiveInterpreter
 
 class PyEval(InteractiveInterpreter):
@@ -36,8 +36,23 @@ def writeoutput(outbuf, success, opt):
     outbuf.write(out)
     outbuf.flush()
 
-def main():
+def worker(pipe):
     etor = PyEval()
+    while True:
+        code = pipe.recv()
+        
+        out = io.StringIO()
+        sys.stdout = out
+        sys.stderr = out
+        sys.stdin = None
+        sys.__stdout__ = out
+        sys.__stderr__ = out
+        sys.__stdin__ = None
+
+        result = etor.runsource(code)
+        pipe.send((result, out.getvalue()))
+    
+def main():
     inbuf = os.fdopen(0, mode='rb')
     outbuf = os.fdopen(1, mode='wb')
     
@@ -50,45 +65,38 @@ def main():
     sys.stdin = dummy
     sys.__stdin__ = dummy
 
-    codebuf = []
     while True:
-        timeout, inp = readinput(inbuf)
-        codebuf.append(inp)
-        source = '\n'.join(codebuf)
-
-        def work(req):
-            out = io.StringIO()
-            sys.stdout = out
-            sys.stderr = out
-            sys.stdin = None
-            sys.__stdout__ = out
-            sys.__stderr__ = out
-            sys.__stdin__ = None
-
-            result = req.etor.runsource(req.source)
-            req.result = result
-            req.output = out.getvalue()
-
-        request = Request(etor, source)
-        thread = Thread(target=work, args=(request,))
+        codebuf = []
+        pipe, childpipe = Pipe()
+        thread = Process(target=worker, args=(childpipe,), daemon=True)
         thread.start()
-        thread.join(timeout / 1000)
-        if thread.is_alive():
-            # there is _no way_ to properly kill a thread in Python
-            # due to GIL and race conditions due to that, so blah
-            # have evalbot revive me
-            writeoutput(outbuf, False, "(timed out)")
-            os._exit(0)
+        while True:
+            timeout, inp = readinput(inbuf)
+            codebuf.append(inp)
+            source = '\n'.join(codebuf)
 
-        more = request.result
-        result = request.output
-        if not more:
-            codebuf = []
-            writeoutput(outbuf, True, result)
-        elif more:
-            writeoutput(outbuf, False, "(continue...)")
-        else:
-            writeoutput(outbuf, False, "something weird happened")
+            pipe.send(source)
+            if not pipe.poll(timeout / 1000):
+                # there is no result after timeout seconds
+                thread.terminate()
+                writeoutput(outbuf, False, "(timed out)")
+                break
+
+            try:
+                # poll = True may mean the pipe is closed
+                more, result = pipe.recv()
+            except EOFError:
+                # yup, the pipe was closed.
+                writeoutput(outbuf, False, "(worker process died)")
+                break
+
+            if not more:
+                codebuf = []
+                writeoutput(outbuf, True, result)
+            elif more:
+                writeoutput(outbuf, False, "(continue...)")
+            else:
+                writeoutput(outbuf, False, "something weird happened")
 
 if __name__ == "__main__":
     main()
