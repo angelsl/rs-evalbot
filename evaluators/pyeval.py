@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import io, sys, struct, os
+import io, sys, struct, os, traceback
 from multiprocessing import Process, Pipe
 from code import InteractiveInterpreter
 
@@ -40,21 +40,25 @@ def worker(pipe):
     etor = PyEval()
     while True:
         code = pipe.recv()
-        
-        out = io.StringIO()
-        sys.stdout = out
-        sys.stderr = out
-        sys.stdin = None
-        sys.__stdout__ = out
-        sys.__stderr__ = out
-        sys.__stdin__ = None
+        try:
+            out = io.StringIO()
+            sys.stdout = out
+            sys.stderr = out
+            sys.stdin = None
+            sys.__stdout__ = out
+            sys.__stderr__ = out
+            sys.__stdin__ = None
 
-        result = etor.runsource(code)
-        pipe.send((result, out.getvalue()))
+            result = etor.runsource(code)
+        except:
+            traceback.print_exc(file=out)
+        finally:
+            pipe.send((result, out.getvalue()))
     
 def main():
     inbuf = os.fdopen(0, mode='rb')
     outbuf = os.fdopen(1, mode='wb')
+    stderr = os.fdopen(2, mode='wb')
     
     # make it harder to hijack stdin/out
     dummy = EmptyIO()
@@ -88,6 +92,10 @@ def main():
             except EOFError:
                 # yup, the pipe was closed.
                 writeoutput(outbuf, False, "(worker process died)")
+                break
+            except:
+                writeoutput(outbuf, False, "(exception @ python main)")
+                traceback.print_exc(file=stderr)
                 break
 
             if not more:
