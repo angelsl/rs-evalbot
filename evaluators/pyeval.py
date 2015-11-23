@@ -72,7 +72,7 @@ def main():
         request = Request(etor, source)
         thread = Thread(target=work, args=(request,))
         thread.start()
-        thread.join(timeout)
+        thread.join(timeout / 1000)
         if thread.is_alive():
             signal.pthread_kill(thread.ident, signal.SIGTERM)
             codebuf = []
