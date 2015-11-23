@@ -202,7 +202,6 @@ fn worker_evaluate(stdin: &mut ChildStdin,
 
 fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc<Semaphore>)
     where F: Fn() -> Child + Send + 'static {
-    use std::mem;
     let mut terminate;
     loop {
         let mut evaluator = childfn();
@@ -244,13 +243,13 @@ fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc
         }
         let pid = evaluator.id();
         println!("killing persistent child pid {}", pid);
-        match evaluator.kill() {
-            _ => (),
-        };
-        mem::drop(evaluator);
         match sudo_kill(pid) {
             Err(x) => println!("failed to kill {}: {}", pid, x),
             Ok(x) => println!("kill result: {:?}", x),
+        };
+        // we only do this here because Child::kill does waitpid, to reap the process
+        match evaluator.kill() {
+            _ => (),
         };
         if terminate {
             break;
