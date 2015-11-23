@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import io, sys, struct, os, signal
+import io, sys, struct, os
 from threading import Thread
 from code import InteractiveInterpreter
 
@@ -74,10 +74,11 @@ def main():
         thread.start()
         thread.join(timeout / 1000)
         if thread.is_alive():
-            signal.pthread_kill(thread.ident, signal.SIGTERM)
-            codebuf = []
+            # there is _no way_ to properly kill a thread in Python
+            # due to GIL and race conditions due to that, so blah
+            # have evalbot revive me
             writeoutput(outbuf, False, "(timed out)")
-            continue
+            os._exit(0)
 
         more = request.result
         result = request.output
