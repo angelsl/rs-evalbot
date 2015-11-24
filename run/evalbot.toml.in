@@ -64,6 +64,30 @@ exec ./out 2&>1
 persistent = false
 
 [[languages]]
+long_name = "c"
+short_name = "c"
+syscalls_path = "rust_syscalls"
+binary_path = "/usr/bin/dash"
+binary_args = ["-c", '''
+set -o errexit
+echo -n "#include <stdio.h>\n$(cat)" | gcc -x c - -O3 -o out 2>&1
+exec ./out 2>&1
+''']
+persistent = false
+
+[[languages]]
+long_name = "c++"
+short_name = "cpp"
+syscalls_path = "rust_syscalls"
+binary_path = "/usr/bin/dash"
+binary_args = ["-c", '''
+set -o errexit
+echo -n "#include <iostream>\n$(cat)" | g++ -x c++ - -O3 -o out 2>&1
+exec ./out 2>&1
+''']
+persistent = false
+
+[[languages]]
 long_name = "csharp"
 short_name = "cs"
 syscalls_path = "mono_syscalls"
