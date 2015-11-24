@@ -1,56 +1,37 @@
 #!/usr/bin/bash
 
-if [ $USER != "root" ]
-then
+if [ $USER != "root" ]; then
     echo "need root to do this"
     exit 1
 fi
 
-if [ -d sandbox ]
-then
-    echo "sandbox/ exists, bailing"
-    exit 1
-fi
-
 set -o errexit -o nounset -o pipefail
-
-cd "${BASH_SOURCE%/*}"
-
 umask 022
 
-mkdir sandbox
-
-pacstrap -c -d sandbox \
+dir=$(mktemp -d)
+mount -t tmpfs tmpfs $dir
+pacstrap -c -d $dir \
     bash \
-    coreutils \
-    grep \
-    dash \
     filesystem \
-    glibc \
-    pacman \
-    procps-ng \
     shadow \
-    util-linux \
-    gcc \
-    file gawk tar sed
 
-mkdir sandbox/dev/shm
-mknod -m 666 sandbox/dev/null c 1 3
-mknod -m 644 sandbox/dev/urandom c 1 9
-arch-chroot sandbox useradd -m rust
+mkdir $dir/dev/shm
+mknod -m 666 $dir/dev/null c 1 3
+mknod -m 644 $dir/dev/urandom c 1 9
+arch-chroot $dir useradd -m -u 717 eval
 
-curl -L https://static.rust-lang.org/rustup.sh | \
-    arch-chroot sandbox /usr/bin/sh -s - --prefix=/ --channel=nightly --yes --disable-sudo
+rm -rf $dir/usr
+rm -rf $dir/var
 
-arch-chroot sandbox pacman -Rcs --noconfirm file gawk tar sed
-arch-chroot sandbox pacman -Scc --noconfirm
+mksquashfs $dir playpen.sqfs
+umount $dir
+rmdir $dir
 
 echo <<EOF
-you may wish to build and/or copy cseval.exe and pyeval.exe into
-the sandbox, and place the appropriate path in the configuration
+made playpen squashfs image: playpen.sqfs
 
-if you are enabling the C# evaluator, install mono
-if you are enabling the Python evaluator, install python
-
-done.
+remember to mount /usr and /var into the playpen (readonly!):
+# pushd playpen
+# mount -o bind,ro /usr usr
+# mount -o bind,ro /var var
 EOF
