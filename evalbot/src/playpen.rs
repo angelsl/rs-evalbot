@@ -12,7 +12,7 @@ pub fn spawn(sandbox: &str,
     cmd.arg("playpen")
        .arg(sandbox)
        .arg("--mount-proc")
-       .arg("--user=rust");
+       .arg("--user=eval");
     if let Some(x) = timeout {
         cmd.arg(format!("--timeout={}", x));
     }
