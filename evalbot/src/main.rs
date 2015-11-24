@@ -229,13 +229,20 @@ fn main() {
     println!("read irc config: {:?}", irc_config);
 
     let conn = Arc::new(IrcServer::from_config(irc_config).unwrap());
+    let mut rehash_cfg = None;
     loop {
         conn.identify().unwrap();
         'connection: loop {
-            let config = Arc::new(match cfg::read::<EvalbotCfg>("evalbot.toml") {
-                Ok(x) => x,
-                Err(x) => panic!("could not read config; {}", x),
-            });
+            let config = {
+                if let Some(cfg) = rehash_cfg.take() {
+                    Arc::new(cfg)
+                } else {
+                    Arc::new(match cfg::read::<EvalbotCfg>("evalbot.toml") {
+                        Ok(x) => x,
+                        Err(x) => panic!("could not read config; {}", x),
+                    })
+                }
+            };
             println!("read config: {:?}", config);
             let evalreqs = Arc::new(Mutex::new(VecDeque::new()));
             let has_work = Arc::new(Semaphore::new(0));
@@ -305,8 +312,18 @@ fn main() {
                             for evaluator in state.evaluators.values() {
                                 evaluator.terminate();
                             }
-                            send_notice!(conn, &sender, "rehashing");
-                            break;
+                            let maybe_rehash_cfg = cfg::read::<EvalbotCfg>("evalbot.toml");
+                            match maybe_rehash_cfg {
+                                Ok(cfg) => {
+                                    rehash_cfg = Some(cfg);
+                                    send_notice!(conn, &sender, "read configuration file OK, rehashing");
+                                    break;
+                                },
+                                Err(x) => {
+                                    send_notice!(conn, &sender, "error reading configuration, check console");
+                                    println!("error while reading config for rehash: {}", x);
+                                }
+                            };
                         }
                         CommandResult::RestartEvaluator(lang) => {
                             if let Some(lang) = state.languages.get(&lang) {
