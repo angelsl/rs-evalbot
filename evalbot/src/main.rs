@@ -82,6 +82,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
     let has_work = state.has_work;
     let cfg = state.cfg;
     let requests = state.requests;
+    let playpen_args = cfg.playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>();
     loop {
         let work;
         {
@@ -100,6 +101,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
             } else {
                 script::eval(&work.code,
                              &*work.language,
+                             &playpen_args[..],
                              &cfg.sandbox_dir,
                              cfg.playpen_timeout)
             };
@@ -246,10 +248,12 @@ fn main() {
                     let binary_path = lang.binary_path.clone();
                     let syscalls_path = lang.syscalls_path.clone();
                     let binary_args = lang.binary_args.clone();
+                    let playpen_args = config.playpen_args.clone();
                     let childfn = move || {
                         playpen::spawn(&sandbox,
                                        &binary_path,
                                        &syscalls_path,
+                                       &playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
                                        &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
                                        None,
                                        false)

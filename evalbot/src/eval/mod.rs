@@ -21,6 +21,7 @@ pub mod script {
 
     pub fn eval(raw: &str,
                 cfg: &cfg::LangCfg,
+                playpen_args: &[&str],
                 sandbox: &str,
                 timeout: usize)
                 -> Result<String, String> {
@@ -28,6 +29,7 @@ pub mod script {
         playpen::exec_wait(&sandbox,
                            &cfg.binary_path,
                            &cfg.syscalls_path,
+                           playpen_args,
                            &cfg.binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
                            &code,
                            timeout)

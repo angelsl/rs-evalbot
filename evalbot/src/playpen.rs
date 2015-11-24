@@ -4,6 +4,7 @@ use std::io::Write;
 pub fn spawn(sandbox: &str,
              command: &str,
              syscalls: &str,
+             playpen_args: &[&str],
              args: &[&str],
              timeout: Option<usize>,
              merge_stderr: bool)
@@ -11,15 +12,12 @@ pub fn spawn(sandbox: &str,
     let mut cmd = Command::new("sudo");
     cmd.arg("playpen")
        .arg(sandbox)
-       .arg("--mount-proc")
-       .arg("--user=eval");
+       .arg(format!("--syscalls-file={}", syscalls))
+       .args(playpen_args);
     if let Some(x) = timeout {
         cmd.arg(format!("--timeout={}", x));
     }
-    cmd.arg(format!("--syscalls-file={}", syscalls))
-       .arg("--devices=/dev/urandom:r,/dev/null:w")
-       .arg("--memory-limit=128")
-       .arg("--")
+    cmd.arg("--")
        .arg(command)
        .args(args)
        .stdin(Stdio::piped())
@@ -35,11 +33,12 @@ pub fn spawn(sandbox: &str,
 pub fn exec_wait(sandbox: &str,
                  command: &str,
                  syscalls: &str,
+                 playpen_args: &[&str],
                  args: &[&str],
                  input: &str,
                  timeout: usize)
                  -> Result<String, String> {
-    let mut child = try!(spawn(sandbox, command, syscalls, args, Some(timeout), true));
+    let mut child = try!(spawn(sandbox, command, syscalls, playpen_args, args, Some(timeout), true));
     if let Some(ref mut x) = child.stdin {
         try!(x.write_all(input.as_bytes())
               .map_err(|x| format!("couldn't write to stdin; {}", x)));

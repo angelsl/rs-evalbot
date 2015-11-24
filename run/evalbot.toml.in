@@ -17,6 +17,12 @@ command_prefix = "$"
 owners = [""]
 # path to your sandbox, relative to where you start evalbot or absolute
 sandbox_dir = "sandbox"
+# playpen arguments
+playpen_args = ["--mount-proc",
+                "--user=eval",
+                "--devices=/dev/urandom:r,/dev/null:w",
+                "--memory-limit=128",
+                "--bind=/usr", "--bind=/var"]
 
 [[languages]]
 # long and short name; rust> or rs> will both be accepted by the bot

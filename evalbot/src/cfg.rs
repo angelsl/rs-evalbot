@@ -12,6 +12,7 @@ pub struct EvalbotCfg {
     pub max_priv_lines: usize,
     pub sandbox_dir: String,
     pub playpen_timeout: usize,
+    pub playpen_args: Vec<String>,
     pub eval_threads: usize,
     pub owners: Vec<String>,
     pub languages: Vec<LangCfg>
