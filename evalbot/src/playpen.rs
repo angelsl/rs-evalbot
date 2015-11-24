@@ -48,8 +48,8 @@ pub fn exec_wait(sandbox: &str,
     let output = try!(child.wait_with_output()
                            .map_err(|x| format!("wait_with_output failed; {}", x)));
     Ok({
-        let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !out.ends_with("\n") { out.push_str("\n"); }
-        out.push_str(&*String::from_utf8_lossy(&output.stderr));
-        out})
+        let mut out = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        out.push_str("\n");
+        out.push_str(String::from_utf8_lossy(&output.stderr).trim());
+        out.trim().to_owned()})
 }
