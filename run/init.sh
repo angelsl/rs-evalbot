@@ -22,6 +22,7 @@ arch-chroot $dir useradd -m -u 717 eval
 
 rm -rf $dir/usr
 rm -rf $dir/var
+mkdir $dir/usr $dir/var
 
 mksquashfs $dir playpen.sqfs
 umount $dir
