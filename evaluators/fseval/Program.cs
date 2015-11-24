@@ -13,10 +13,14 @@ namespace FSEval {
         private static readonly StringWriter EvalOutput = new StringWriter();
         private static Shell.FsiEvaluationSession _evaluator;
         private static void Main(string[] args) {
+            StringReader input = new StringReader("");
+            Console.SetOut(EvalOutput);
+            Console.SetError(EvalOutput);
+            Console.SetIn(input);
             _evaluator = Shell.FsiEvaluationSession.Create(
                 Shell.FsiEvaluationSession.GetDefaultConfiguration(),
                 new[] { "fsi", "--noninteractive" },
-                new StringReader(""), EvalOutput, EvalOutput, new FSharpOption<bool>(true));
+                input, EvalOutput, EvalOutput, new FSharpOption<bool>(true));
             Run();
         }
 

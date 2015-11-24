@@ -52,6 +52,7 @@ namespace CSEval {
 
             Console.SetOut(Output);
             Console.SetError(Output);
+            Console.SetIn(new StringReader(""));
 
             ReportPrinter printer = new ConsoleReportPrinter();
 
