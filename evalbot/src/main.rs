@@ -317,7 +317,7 @@ fn main() {
                                 Ok(cfg) => {
                                     rehash_cfg = Some(cfg);
                                     send_notice!(conn, &sender, "read configuration file OK, rehashing");
-                                    break;
+                                    continue 'connection;
                                 },
                                 Err(x) => {
                                     send_notice!(conn, &sender, "error reading configuration, check console");
@@ -343,6 +343,7 @@ fn main() {
                     };
                 }
             }
+            break 'connection;
         }
         conn.reconnect().unwrap();
     }
