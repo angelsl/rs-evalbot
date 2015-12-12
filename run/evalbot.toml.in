@@ -42,7 +42,18 @@ exec ./out 2>&1
 persistent = false
 # optional, string to prepend before input
 code_before = '''
-#![allow(dead_code, unused_variables)]
+#![allow(dead_code, unused_variables, unused_features)]
+#![feature(core_intrinsics)]
+macro_rules! type_of {
+    ($x:expr) => {
+        {
+            fn type_of<T>(x: &T) -> &'static str {
+                unsafe { std::intrinsics::type_name::<T>() }
+            }
+            type_of(&$x)
+        }
+    }
+}
 fn show<T: std::fmt::Debug>(e: T) { println!("{:?}", e) }
 fn main() {
     show({'''
