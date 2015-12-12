@@ -124,3 +124,11 @@ syscalls_path = "mono_syscalls"
 binary_path = "/usr/bin/mono"
 binary_args = ["/usr/local/bin/fseval.exe"]
 persistent = true
+
+[[languages]]
+long_name = "javascript"
+short_name = "js"
+syscalls_path = "node_syscalls"
+binary_path = "/usr/bin/node"
+binary_args = ["/usr/local/bin/jseval.js"]
+persistent = true
