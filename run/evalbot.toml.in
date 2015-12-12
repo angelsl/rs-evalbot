@@ -35,7 +35,10 @@ binary_path = "/usr/bin/dash"
 # arguments to pass
 binary_args = ["-c", '''
 set -o errexit
-rustc - -o ./out "$@" 2>&1
+cat <<EOF | rustc - -o ./out "$@" 2>&1
+$(cat)
+static VERSION: &'static str = "$(rustc -V | head -1 | tr -d '\n')";
+EOF
 exec ./out 2>&1
 ''', "evaluate", "-C", "opt-level=2"]
 # whether this is a daemon/repl (persistent) or compile-and-run (not)
