@@ -34,7 +34,12 @@ if (cluster.isMaster) {
         }
     });
 } else {
-    var context = vm.createContext(global);
+    var context = vm.createContext({
+        console: console,
+        module: module,
+        process: process,
+        require: require
+    });
     
     var stdout;
     var callback = function(data) {
