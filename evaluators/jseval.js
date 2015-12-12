@@ -65,7 +65,9 @@ if (cluster.isMaster) {
                 timeout: message.timeout
             });
             result = stdout;
-            result += util.inspect(out);
+            if (typeof out !== "undefined") {
+                result += util.inspect(out);
+            }
         } catch(err) {
             result = stdout;
             result += err.message;
