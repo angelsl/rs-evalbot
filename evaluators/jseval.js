@@ -16,7 +16,7 @@ if (cluster.isMaster) {
     var outbuf = new Buffer(5);
     
     worker.on('message', function(message) {
-        outbuf.writeUInt8(1, 0);
+        outbuf.writeUInt8(message.success ? 1 : 0, 0);
         outbuf.writeInt32LE(Buffer.byteLength(message.output, 'utf8'), 1);
         process.stdout.write(outbuf);
         process.stdout.write(message.output, 'utf8');
@@ -42,6 +42,7 @@ if (cluster.isMaster) {
     });
     
     var stdout;
+    var buf = "";
     var callback = function(data) {
         stdout += data;
     };
@@ -57,23 +58,31 @@ if (cluster.isMaster) {
     }(process.stderr.write));
     
     process.on('message', function(message) {
-        var result;
+        var finished = true;
+        buf += message.code;
         stdout = "";
         try {
-            var out = vm.runInContext(message.code, context, {
+            var out = vm.runInContext(buf, context, {
                 filename: 'stdin',
                 timeout: message.timeout
             });
-            result = stdout;
             if (typeof out !== "undefined") {
-                result += util.inspect(out);
+                stdout += util.inspect(out);
             }
         } catch(err) {
-            result = stdout;
-            result += err.message;
+            // FIXME hack hack hack
+            if (err.name === "SyntaxError" && err.message === "Unexpected end of input") {
+                finished = false;
+            } else {
+                stdout += err.toString();
+            }
+        }
+        if (finished) {
+            buf = "";
         }
         process.send({
-            output: result
+            output: finished ? stdout : "(continue...)",
+            success: finished
         });
     });
 }
