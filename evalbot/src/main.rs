@@ -1,5 +1,4 @@
 #![feature(semaphore)]
-#![feature(read_exact)]
 #![feature(plugin)]
 #![plugin(clippy)]
 

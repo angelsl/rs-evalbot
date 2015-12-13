@@ -115,7 +115,7 @@ fn worker_evaluate(stdin: &mut ChildStdin,
         }
     };
 
-    if let &Request::Work { ref code, timeout, ref reporter } = work {
+    if let Request::Work { ref code, timeout, ref reporter } = *work {
         try_io!(stdin.write_i32::<NativeEndian>((timeout * 1000) as i32),
                 reporter);
         let bytes = code.as_bytes();
@@ -200,7 +200,7 @@ fn worker_evaluate(stdin: &mut ChildStdin,
     }
 }
 
-fn worker<'a, F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc<Semaphore>)
+fn worker<F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc<Semaphore>)
     where F: Fn() -> Child + Send + 'static {
     let mut terminate;
     loop {
