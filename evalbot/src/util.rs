@@ -1,9 +1,12 @@
 use std;
 
-pub fn wrap_output(input: &str, max_len: usize) -> Vec<&str> {
+pub fn wrap_and_trim_output(input: &str, max_len: usize) -> Vec<&str> {
     let mut ret = vec![];
     for line in input.lines() {
         let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
         if line.len() <= max_len {
             ret.push(line);
         } else {

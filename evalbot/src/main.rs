@@ -118,7 +118,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
                 continue;
             }
 
-            let result = util::wrap_output(&result,
+            let result = util::wrap_and_trim_output(&result,
                                            if work.is_channel {
                                                cfg.max_channel_line_len
                                            } else {
