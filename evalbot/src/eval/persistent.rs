@@ -23,8 +23,15 @@ enum Request {
     }
 }
 
+#[derive(PartialEq)]
+enum Status {
+    EvalbotError,
+    ChildError,
+    Success
+}
+
 struct Output {
-    success: bool,
+    success: Status,
     output: String
 }
 
@@ -60,14 +67,14 @@ impl Evaluator {
             Err(x) => {
                 println!("couldn't receive result: {:?}", x);
                 Output {
-                    success: false,
+                    success: Status::EvalbotError,
                     output: "something bad happened".to_owned()
                 }
             }
         };
 
         // this basically controls whether the output is prefixed if it's in a channel
-        if result.success { Ok(result.output) } else { Err(result.output) }
+        if result.success == Status::Success { Ok(result.output) } else { Err(result.output) }
     }
 
     pub fn restart(&self) {
@@ -88,7 +95,7 @@ fn worker_evaluate(stdin: &mut ChildStdin,
             match $x {
                 Err(x) => {
                     println!("couldn't communicate with child (1): {:?}", x);
-                    match $repr.send(Output { success: false, output: "couldn't communicate with child (1)".to_owned() }) {
+                    match $repr.send(Output { success: Status::EvalbotError, output: "couldn't communicate with child (1)".to_owned() }) {
                         Ok(_) => (),
                         Err(x) => println!("couldn't report error (1): {:?}", x)
                     };
@@ -104,7 +111,7 @@ fn worker_evaluate(stdin: &mut ChildStdin,
             match $x {
                 Err(x) => {
                     println!("couldn't communicate with child (2): {:?}", x);
-                    match $repr.send(Err(Output { success: false, output: "couldn't communicate with child (2)".to_owned() })) {
+                    match $repr.send(Output { success: Status::EvalbotError, output: "couldn't communicate with child (2)".to_owned() }) {
                         Ok(_) => (),
                         Err(x) => println!("couldn't report error (2): {:?}", x)
                     };
@@ -134,20 +141,20 @@ fn worker_evaluate(stdin: &mut ChildStdin,
                 let success = try_io2!(stdout.read_u8(), tx) == 1;
                 let result_len = try_io2!(stdout.read_i32::<NativeEndian>(), tx);
                 if result_len > 1024 * 1024 {
-                    match tx.send(Ok(Output {
-                        success: false,
+                    match tx.send(Output {
+                        success: Status::EvalbotError,
                         output: "response from child too large".to_owned()
-                    })) {
+                    }) {
                         _ => (),
                     };
                     return;
                 }
                 let mut result_bytes = vec![0u8; result_len as usize];
                 try_io2!(stdout.read_exact(&mut result_bytes), tx);
-                match tx.send(Ok(Output {
-                    success: success,
+                match tx.send(Output {
+                    success: if success { Status::Success } else { Status::ChildError },
                     output: String::from_utf8_lossy(&result_bytes).into_owned()
-                })) {
+                }) {
                     _ => (),
                 };
             });
@@ -158,10 +165,10 @@ fn worker_evaluate(stdin: &mut ChildStdin,
             let timeout = (timeout as f64 * 1.5) as u64;
             thread::spawn(move || {
                 thread::sleep(::std::time::Duration::new(timeout, 0));
-                match tx.send(Err(Output {
-                    success: false,
+                match tx.send(Output {
+                    success: Status::EvalbotError,
                     output: "timed out waiting for evaluator response".to_owned()
-                })) {
+                }) {
                     _ => (),
                 };
             });
@@ -175,24 +182,16 @@ fn worker_evaluate(stdin: &mut ChildStdin,
             Ok(x) => x,
             Err(_) => {
                 err = true;
-                Ok(Output {
-                    success: false,
+                Output {
+                    success: Status::EvalbotError,
                     output: "couldn't receive result from communicator thread".to_owned()
-                })
+                }
             }
         };
-
-        // this one is the result from the threads
-        // Ok means we got the response from the sandboxed evaluator
-        // Err means we timed out on Rust end (if the evaluator timed out, it'll be
-        // Ok(Output { success: false, output: "timed out" }) or something like that
-        let result = match result {
-            Ok(x) => x,
-            Err(x) => {
-                err = true;
-                x
-            }
-        };
+        
+        if result.success == Status::EvalbotError {
+            err = true;
+        }
 
         // we'll just ignore this error, not going to restart child
         match reporter.send(result) {
