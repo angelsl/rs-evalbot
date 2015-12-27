@@ -15,6 +15,7 @@ mod eval;
 use irc::client::prelude::*;
 use std::sync::{Arc, Mutex, Semaphore};
 use std::thread;
+use std::time::Duration;
 use std::collections::{VecDeque, HashMap};
 
 use cfg::{EvalbotCfg, LangCfg};
@@ -256,14 +257,19 @@ fn main() {
                     let binary_args = lang.binary_args.clone();
                     let playpen_args = config.playpen_args.clone();
                     let childfn = move || {
-                        playpen::spawn(&sandbox,
-                                       &binary_path,
-                                       &syscalls_path,
-                                       &playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
-                                       &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
-                                       None,
-                                       false)
-                            .unwrap()
+                        loop {
+                            if let Ok(x) = playpen::spawn(&sandbox,
+                                                          &binary_path,
+                                                          &syscalls_path,
+                                                          &playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
+                                                          &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
+                                                          None,
+                                                          false) {
+                                return x;
+                            } else {
+                                thread::sleep(Duration::new(1, 0));
+                            }
+                        }
                     };
                     evaluators.insert(lang.long_name.clone(), persistent::new(childfn));
                 }
