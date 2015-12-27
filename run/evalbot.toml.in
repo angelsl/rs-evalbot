@@ -40,12 +40,11 @@ $(cat)
 static VERSION: &'static str = "$(rustc -V | head -1 | tr -d '\n')";
 EOF
 exec ./out 2>&1
-''', "evaluate", "-C", "opt-level=2"]
+''', "evaluate", "-C", "opt-level=2", "-A", "warnings"]
 # whether this is a daemon/repl (persistent) or compile-and-run (not)
 persistent = false
 # optional, string to prepend before input
 code_before = '''
-#![allow(dead_code, unused_variables, unused_features)]
 #![feature(core_intrinsics)]
 macro_rules! type_of {
     ($x:expr) => {
