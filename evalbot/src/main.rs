@@ -231,7 +231,9 @@ fn main() {
     let conn = Arc::new(IrcServer::from_config(irc_config).unwrap());
     let mut rehash_cfg = None;
     loop {
-        conn.identify().unwrap();
+        while !conn.identify().is_ok() {
+            thread::sleep(Duration::new(1, 0));
+        }
         'connection: loop {
             let config = {
                 if let Some(cfg) = rehash_cfg.take() {
@@ -350,6 +352,8 @@ fn main() {
             }
             break 'connection;
         }
-        conn.reconnect().unwrap();
+        while !conn.reconnect().is_ok() {
+            thread::sleep(Duration::new(1, 0));
+        }
     }
 }
