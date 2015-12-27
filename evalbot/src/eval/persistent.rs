@@ -133,6 +133,15 @@ fn worker_evaluate(stdin: &mut ChildStdin,
                 let mut stdout = stdout.lock().unwrap();
                 let success = try_io2!(stdout.read_u8(), tx) == 1;
                 let result_len = try_io2!(stdout.read_i32::<NativeEndian>(), tx);
+                if result_len > 1024 * 1024 {
+                    match tx.send(Ok(Output {
+                        success: false,
+                        output: "response from child too large".to_owned()
+                    })) {
+                        _ => (),
+                    };
+                    return;
+                }
                 let mut result_bytes = vec![0u8; result_len as usize];
                 try_io2!(stdout.read_exact(&mut result_bytes), tx);
                 match tx.send(Ok(Output {
