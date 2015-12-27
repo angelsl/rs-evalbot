@@ -77,25 +77,49 @@ exec ./out 2>&1
 persistent = false
 
 [[languages]]
-long_name = "c"
-short_name = "c"
+long_name = "gcc-c"
+short_name = "gcc"
 syscalls_path = "rust_syscalls"
 binary_path = "/usr/bin/dash"
 binary_args = ["-c", '''
 set -o errexit
-echo -n "#include <stdio.h>\n$(cat)" | gcc -x c - -O3 -o out 2>&1
+echo -n "#include <stdio.h>\n$(cat)" | gcc -w -x c - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
 persistent = false
 
 [[languages]]
-long_name = "c++"
-short_name = "cpp"
+long_name = "clang-c"
+short_name = "c"
 syscalls_path = "rust_syscalls"
 binary_path = "/usr/bin/dash"
 binary_args = ["-c", '''
 set -o errexit
-echo -n "#include <iostream>\n$(cat)" | g++ -x c++ - -O3 -o out 2>&1
+echo -n "#include <stdio.h>\n$(cat)" | clang -w -pedantic-errors -std=c11 -x c - -O3 -o out 2>&1
+exec ./out 2>&1
+''']
+persistent = false
+
+[[languages]]
+long_name = "gcc-c++"
+short_name = "g++"
+syscalls_path = "rust_syscalls"
+binary_path = "/usr/bin/dash"
+binary_args = ["-c", '''
+set -o errexit
+echo -n "#include <iostream>\n$(cat)" | g++ -w -x c++ - -O3 -o out 2>&1
+exec ./out 2>&1
+''']
+persistent = false
+
+[[languages]]
+long_name = "clang-c++"
+short_name = "c++"
+syscalls_path = "rust_syscalls"
+binary_path = "/usr/bin/dash"
+binary_args = ["-c", '''
+set -o errexit
+echo -n "#include <iostream>\n$(cat)" | clang++ -w -pedantic-errors -std=c++11 -x c++ - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
 persistent = false
