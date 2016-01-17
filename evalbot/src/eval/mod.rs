@@ -13,9 +13,9 @@ pub fn new(cfg: cfg::LangCfg,
            timeout: usize)
            -> Box<Lang> {
     if cfg.persistent {
-        Box::new(compiler::CompilerLang::new(cfg, playpen_args, sandbox_path, timeout))
-    } else {
         Box::new(persistent::ReplLang::new(cfg, playpen_args, sandbox_path, timeout))
+    } else {
+        Box::new(compiler::CompilerLang::new(cfg, playpen_args, sandbox_path, timeout))
     }
 }
 
