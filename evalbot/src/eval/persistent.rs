@@ -22,7 +22,7 @@ pub struct ReplLang {
 
 impl std::fmt::Debug for ReplLang {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "ReplLang {{ cfg: {:?} }}", self.cfg)
+        f.debug_struct("ReplLang").field("cfg", &self.cfg).finish()
     }
 }
 

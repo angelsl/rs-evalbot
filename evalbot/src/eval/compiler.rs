@@ -41,6 +41,6 @@ impl eval::Lang for CompilerLang {
 
 impl std::fmt::Debug for CompilerLang {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "CompilerLang {{ cfg: {:?} }}", self.cfg)
+        f.debug_struct("CompilerLang").field("cfg", &self.cfg).finish()
     }
 }
