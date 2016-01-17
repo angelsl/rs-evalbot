@@ -18,8 +18,8 @@ use std::thread;
 use std::time::Duration;
 use std::collections::{VecDeque, HashMap};
 
-use cfg::{EvalbotCfg, LangCfg};
-use eval::{script, persistent};
+use cfg::EvalbotCfg;
+use eval::Lang;
 
 macro_rules! send_msg {
     ($conn:expr, $dest:expr, $line:expr) => {
@@ -43,7 +43,7 @@ struct Req {
     pub sender: String,
     pub target: String,
     pub code: String,
-    pub language: Arc<LangCfg>
+    pub language: Arc<Box<Lang>>
 }
 
 #[derive(Debug)]
@@ -64,8 +64,7 @@ struct State {
     requests: Arc<Mutex<VecDeque<WorkerMessage>>>,
     has_work: Arc<Semaphore>,
     cfg: Arc<EvalbotCfg>,
-    languages: Arc<HashMap<String, Arc<LangCfg>>>,
-    evaluators: Arc<HashMap<String, eval::persistent::Evaluator>>
+    languages: Arc<HashMap<String, Arc<Box<Lang>>>>
 }
 
 impl State {
@@ -82,7 +81,6 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
     let has_work = state.has_work;
     let cfg = state.cfg;
     let requests = state.requests;
-    let playpen_args = cfg.playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>();
     loop {
         let work;
         {
@@ -93,18 +91,7 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
         }
 
         if let Some(WorkerMessage::Req(work)) = work {
-            let result = if work.language.persistent {
-                state.evaluators
-                     .get(&work.language.long_name)
-                     .unwrap()
-                     .eval(&work.code, cfg.playpen_timeout)
-            } else {
-                script::eval(&work.code,
-                             &*work.language,
-                             &playpen_args[..],
-                             &cfg.sandbox_dir,
-                             cfg.playpen_timeout)
-            };
+            let result = work.language.eval(&work.code);
 
             let (result, err) = match result {
                 Ok(x) => (x, false),
@@ -119,11 +106,11 @@ fn evaluate_loop<'a, S, T, U>(conn: Arc<S>, state: State)
             }
 
             let result = util::wrap_and_trim_output(&result,
-                                           if work.is_channel {
-                                               cfg.max_channel_line_len
-                                           } else {
-                                               425
-                                           });
+                                                    if work.is_channel {
+                                                        cfg.max_channel_line_len
+                                                    } else {
+                                                        425
+                                                    });
 
             let max_lines = if work.is_channel {
                 cfg.max_channel_lines
@@ -250,44 +237,23 @@ fn main() {
             let has_work = Arc::new(Semaphore::new(0));
 
             let mut languages = HashMap::new();
-            let mut evaluators = HashMap::new();
             for lang in config.languages.clone() {
-                if lang.persistent {
-                    let sandbox = config.sandbox_dir.clone();
-                    let binary_path = lang.binary_path.clone();
-                    let syscalls_path = lang.syscalls_path.clone();
-                    let binary_args = lang.binary_args.clone();
-                    let playpen_args = config.playpen_args.clone();
-                    let childfn = move || {
-                        loop {
-                            if let Ok(x) = playpen::spawn(&sandbox,
-                                                          &binary_path,
-                                                          &syscalls_path,
-                                                          &playpen_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
-                                                          &binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
-                                                          None,
-                                                          false) {
-                                return x;
-                            } else {
-                                thread::sleep(Duration::new(1, 0));
-                            }
-                        }
-                    };
-                    evaluators.insert(lang.long_name.clone(), persistent::new(childfn));
-                }
-                let lang = Arc::new(lang);
-                languages.insert(lang.short_name.clone(), lang.clone());
-                languages.insert(lang.long_name.clone(), lang);
+                let short_name = lang.short_name.clone();
+                let long_name = lang.long_name.clone();
+                let lang_obj = Arc::new(eval::new(lang,
+                                                  config.playpen_args.clone(),
+                                                  config.sandbox_dir.clone(),
+                                                  config.playpen_timeout));
+                languages.insert(short_name, lang_obj.clone());
+                languages.insert(long_name, lang_obj);
             }
             let languages = Arc::new(languages);
-            let evaluators = Arc::new(evaluators);
 
             let state = State {
                 cfg: config,
                 requests: evalreqs,
                 has_work: has_work,
-                languages: languages,
-                evaluators: evaluators
+                languages: languages
             };
 
             for _ in 0..state.cfg.eval_threads {
@@ -313,36 +279,33 @@ fn main() {
                     match x {
                         CommandResult::Req(req) => state.send_message(WorkerMessage::Req(req)),
                         CommandResult::Rehash => {
-                            for _ in 0..state.cfg.eval_threads {
-                                state.send_message(WorkerMessage::Terminate);
-                            }
-                            for evaluator in state.evaluators.values() {
-                                evaluator.terminate();
-                            }
                             let maybe_rehash_cfg = cfg::read::<EvalbotCfg>("evalbot.toml");
                             match maybe_rehash_cfg {
                                 Ok(cfg) => {
                                     rehash_cfg = Some(cfg);
-                                    send_notice!(conn, &sender, "read configuration file OK, rehashing");
+                                    send_notice!(conn,
+                                                 &sender,
+                                                 "read configuration file OK, rehashing");
+                                    for _ in 0..state.cfg.eval_threads {
+                                        state.send_message(WorkerMessage::Terminate);
+                                    }
+                                    for language in state.languages.values() {
+                                        language.terminate();
+                                    }
                                     continue 'connection;
-                                },
+                                }
                                 Err(x) => {
-                                    send_notice!(conn, &sender, "error reading configuration, check console");
+                                    send_notice!(conn,
+                                                 &sender,
+                                                 "error reading configuration, check console");
                                     println!("error while reading config for rehash: {}", x);
                                 }
                             };
                         }
                         CommandResult::RestartEvaluator(lang) => {
                             if let Some(lang) = state.languages.get(&lang) {
-                                send_notice!(conn,
-                                             &sender,
-                                             match state.evaluators.get(&lang.long_name) {
-                                                 Some(x) => {
-                                                     x.restart();
-                                                     "restarting evaluator"
-                                                 }
-                                                 None => "this language's not persistent",
-                                             });
+                                lang.restart();
+                                send_notice!(conn, &sender, "restarting evaluator");
                             } else {
                                 send_notice!(conn, &sender, "invalid language name");
                             }

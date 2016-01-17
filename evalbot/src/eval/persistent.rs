@@ -1,18 +1,35 @@
 use std;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::process::{Command, Child, ChildStdin, ChildStdout, ExitStatus};
+use std::process::{Command, ChildStdin, ChildStdout, ExitStatus};
 use std::sync::{mpsc, Arc, Mutex, Semaphore};
 use std::thread;
+use std::time::Duration;
 
 use byteorder::{ReadBytesExt, WriteBytesExt, NativeEndian};
 
+use {cfg, playpen, eval};
+
 #[derive(Clone)]
-pub struct Evaluator {
+pub struct ReplLang {
+    cfg: cfg::LangCfg,
+    playpen_args: Vec<String>,
+    sandbox_path: String,
+    timeout: usize,
     queue: Arc<Mutex<VecDeque<Request>>>,
     has_work: Arc<Semaphore>
 }
 
+impl std::fmt::Debug for ReplLang {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ReplLang {{ cfg: {:?} }}", self.cfg)
+    }
+}
+
+unsafe impl Send for ReplLang {}
+unsafe impl Sync for ReplLang {}
+
+#[derive(Clone)]
 enum Request {
     Terminate,
     Restart,
@@ -35,30 +52,51 @@ struct Output {
     output: String
 }
 
-impl Evaluator {
-    fn new() -> Self {
-        Evaluator {
+impl ReplLang {
+    pub fn new(cfg: cfg::LangCfg,
+               playpen_args: Vec<String>,
+               sandbox_path: String,
+               timeout: usize)
+               -> Self {
+        let ret = ReplLang {
+            cfg: cfg,
+            playpen_args: playpen_args,
+            sandbox_path: sandbox_path,
+            timeout: timeout,
             queue: Arc::new(Mutex::new(VecDeque::new())),
             has_work: Arc::new(Semaphore::new(0))
+        };
+        {
+            let has_work = ret.has_work.clone();
+            let queue = ret.queue.clone();
+            let cfg = ret.cfg.clone();
+            let sandbox_path = ret.sandbox_path.clone();
+            let playpen_args = ret.playpen_args.clone();
+            thread::spawn(move || {
+                worker(has_work, queue, cfg, sandbox_path, playpen_args);
+            });
         }
+        ret
     }
 
     fn send_request(&self, req: Request) {
         self.queue.lock().unwrap().push_back(req);
         self.has_work.release();
     }
+}
 
+impl eval::Lang for ReplLang {
     #[cfg(not(unix))]
-    pub fn eval(&self, _: &str, _: usize) -> Result<String, String> {
+    fn eval(&self, _: &str) -> Result<String, String> {
         Err("not implemented".to_owned())
     }
 
     #[cfg(unix)]
-    pub fn eval(&self, code: &str, timeout: usize) -> Result<String, String> {
+    fn eval(&self, code: &str) -> Result<String, String> {
         let (tx, rx) = mpsc::channel();
         self.send_request(Request::Work {
             code: code.to_owned(),
-            timeout: timeout,
+            timeout: self.timeout,
             reporter: tx
         });
 
@@ -77,12 +115,84 @@ impl Evaluator {
         if result.success == Status::Success { Ok(result.output) } else { Err(result.output) }
     }
 
-    pub fn restart(&self) {
+    fn restart(&self) {
         self.send_request(Request::Restart);
     }
 
-    pub fn terminate(&self) {
+    fn terminate(&self) {
         self.send_request(Request::Terminate);
+    }
+}
+
+fn worker(has_work: Arc<Semaphore>,
+          queue: Arc<Mutex<VecDeque<Request>>>,
+          cfg: cfg::LangCfg,
+          sandbox_path: String,
+          playpen_args: Vec<String>) {
+    let mut terminate;
+    loop {
+        let mut evaluator = if let Ok(x) = playpen::spawn(&sandbox_path,
+                                                          &cfg.binary_path,
+                                                          &cfg.syscalls_path,
+                                                          &playpen_args,
+                                                          &cfg.binary_args,
+                                                          None,
+                                                          false) {
+            x
+        } else {
+            thread::sleep(Duration::new(1, 0));
+            continue;
+        };
+        println!("started persistent child pid {}", evaluator.id());
+        let mut stdin = evaluator.stdin.take().unwrap();
+        let stdout = Arc::new(Mutex::new(evaluator.stdout.take().unwrap()));
+        loop {
+            has_work.acquire();
+            let mut rvec = queue.lock().unwrap();
+            let work = rvec.pop_front();
+            std::mem::drop(rvec);
+
+            if let Some(work) = work {
+                match work {
+                    Request::Terminate => {
+                        println!("requested to terminate persistent child pid {}",
+                                 evaluator.id());
+                        terminate = true;
+                        break;
+                    }
+
+                    Request::Restart => {
+                        println!("requested to restart persistent child pid {}",
+                                 evaluator.id());
+                        terminate = false;
+                        break;
+                    }
+                    Request::Work { .. } => {
+                        let res = worker_evaluate(&mut stdin, stdout.clone(), &work);
+                        match res {
+                            Ok(_) => (),
+                            Err(_) => {
+                                terminate = false;
+                                break;
+                            }
+                        };
+                    }
+                }
+            }
+        }
+        let pid = evaluator.id();
+        println!("killing persistent child pid {}", pid);
+        match sudo_kill(pid) {
+            Err(x) => println!("failed to kill {}: {}", pid, x),
+            Ok(x) => println!("kill result: {:?}", x),
+        };
+        // we only do this here because Child::kill does waitpid, to reap the process
+        match evaluator.kill() {
+            _ => (),
+        };
+        if terminate {
+            break;
+        }
     }
 }
 
@@ -188,7 +298,7 @@ fn worker_evaluate(stdin: &mut ChildStdin,
                 }
             }
         };
-        
+
         if result.success == Status::EvalbotError {
             err = true;
         }
@@ -208,63 +318,6 @@ fn worker_evaluate(stdin: &mut ChildStdin,
     }
 }
 
-fn worker<F>(childfn: F, queue: Arc<Mutex<VecDeque<Request>>>, has_work: Arc<Semaphore>)
-    where F: Fn() -> Child + Send + 'static {
-    let mut terminate;
-    loop {
-        let mut evaluator = childfn();
-        println!("started persistent child pid {}", evaluator.id());
-        let mut stdin = evaluator.stdin.take().unwrap();
-        let stdout = Arc::new(Mutex::new(evaluator.stdout.take().unwrap()));
-        loop {
-            has_work.acquire();
-            let mut rvec = queue.lock().unwrap();
-            let work = rvec.pop_front();
-            std::mem::drop(rvec);
-
-            if let Some(work) = work {
-                match work {
-                    Request::Terminate => {
-                        println!("requested to terminate persistent child pid {}",
-                                 evaluator.id());
-                        terminate = true;
-                        break;
-                    }
-                    Request::Restart => {
-                        println!("requested to restart persistent child pid {}",
-                                 evaluator.id());
-                        terminate = false;
-                        break;
-                    }
-                    Request::Work { .. } => {
-                        let res = worker_evaluate(&mut stdin, stdout.clone(), &work);
-                        match res {
-                            Ok(_) => (),
-                            Err(_) => {
-                                terminate = false;
-                                break;
-                            }
-                        };
-                    }
-                }
-            }
-        }
-        let pid = evaluator.id();
-        println!("killing persistent child pid {}", pid);
-        match sudo_kill(pid) {
-            Err(x) => println!("failed to kill {}: {}", pid, x),
-            Ok(x) => println!("kill result: {:?}", x),
-        };
-        // we only do this here because Child::kill does waitpid, to reap the process
-        match evaluator.kill() {
-            _ => (),
-        };
-        if terminate {
-            break;
-        }
-    }
-}
-
 fn sudo_kill(pid: u32) -> Result<ExitStatus, String> {
     try!(Command::new("sudo")
              .args(&["kill", "-KILL"])
@@ -273,14 +326,4 @@ fn sudo_kill(pid: u32) -> Result<ExitStatus, String> {
              .map_err(|x| format!("couldn't spawn sudo kill: {:?}", x)))
         .wait()
         .map_err(|x| format!("couldn't SIGKILL: {:?}", x))
-}
-
-pub fn new<F>(childfn: F) -> Evaluator
-    where F: Fn() -> Child + Send + 'static {
-    let ret = Evaluator::new();
-    let (queue, has_work) = (ret.queue.clone(), ret.has_work.clone());
-    thread::spawn(move || {
-        worker(childfn, queue, has_work);
-    });
-    ret
 }

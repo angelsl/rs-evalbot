@@ -1,14 +1,15 @@
 use std::process::{Command, Stdio, Child};
 use std::io::Write;
+use std::ffi::OsStr;
 
-pub fn spawn(sandbox: &str,
-             command: &str,
-             syscalls: &str,
-             playpen_args: &[&str],
-             args: &[&str],
-             timeout: Option<usize>,
-             merge_stderr: bool)
-             -> Result<Child, String> {
+pub fn spawn<S: AsRef<OsStr>>(sandbox: &str,
+                              command: &str,
+                              syscalls: &str,
+                              playpen_args: &[S],
+                              args: &[S],
+                              timeout: Option<usize>,
+                              merge_stderr: bool)
+                              -> Result<Child, String> {
     let mut cmd = Command::new("sudo");
     cmd.arg("playpen")
        .arg(sandbox)
@@ -30,15 +31,21 @@ pub fn spawn(sandbox: &str,
     cmd.spawn().map_err(|x| format!("couldn't playpen_exec; {}", x))
 }
 
-pub fn exec_wait(sandbox: &str,
-                 command: &str,
-                 syscalls: &str,
-                 playpen_args: &[&str],
-                 args: &[&str],
-                 input: &str,
-                 timeout: usize)
-                 -> Result<String, String> {
-    let mut child = try!(spawn(sandbox, command, syscalls, playpen_args, args, Some(timeout), true));
+pub fn exec_wait<S: AsRef<OsStr>>(sandbox: &str,
+                                  command: &str,
+                                  syscalls: &str,
+                                  playpen_args: &[S],
+                                  args: &[S],
+                                  input: &str,
+                                  timeout: usize)
+                                  -> Result<String, String> {
+    let mut child = try!(spawn(sandbox,
+                               command,
+                               syscalls,
+                               playpen_args,
+                               args,
+                               Some(timeout),
+                               true));
     if let Some(ref mut x) = child.stdin {
         try!(x.write_all(input.as_bytes())
               .map_err(|x| format!("couldn't write to stdin; {}", x)));
@@ -51,5 +58,6 @@ pub fn exec_wait(sandbox: &str,
         let mut out = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         out.push_str("\n");
         out.push_str(String::from_utf8_lossy(&output.stderr).trim());
-        out.trim().to_owned()})
+        out.trim().to_owned()
+    })
 }

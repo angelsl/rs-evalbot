@@ -1,4 +1,23 @@
 use cfg;
+use std::fmt::Debug;
+
+pub trait Lang : Debug + Send + Sync {
+    fn eval(&self, code: &str) -> Result<String, String>;
+    fn restart(&self) {}
+    fn terminate(&self) {}
+}
+
+pub fn new(cfg: cfg::LangCfg,
+           playpen_args: Vec<String>,
+           sandbox_path: String,
+           timeout: usize)
+           -> Box<Lang> {
+    if cfg.persistent {
+        Box::new(compiler::CompilerLang::new(cfg, playpen_args, sandbox_path, timeout))
+    } else {
+        Box::new(persistent::ReplLang::new(cfg, playpen_args, sandbox_path, timeout))
+    }
+}
 
 fn wrap_code(raw: &str, cfg: &cfg::LangCfg) -> String {
     let mut code = String::with_capacity(raw.len());
@@ -16,24 +35,5 @@ fn wrap_code(raw: &str, cfg: &cfg::LangCfg) -> String {
     code
 }
 
-pub mod script {
-    use {cfg, eval, playpen};
-
-    pub fn eval(raw: &str,
-                cfg: &cfg::LangCfg,
-                playpen_args: &[&str],
-                sandbox: &str,
-                timeout: usize)
-                -> Result<String, String> {
-        let code = eval::wrap_code(raw, cfg);
-        playpen::exec_wait(&sandbox,
-                           &cfg.binary_path,
-                           &cfg.syscalls_path,
-                           playpen_args,
-                           &cfg.binary_args.iter().map(|s| &**s).collect::<Vec<&str>>()[..],
-                           &code,
-                           timeout)
-    }
-}
-
-pub mod persistent;
+mod compiler;
+mod persistent;
