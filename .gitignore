@@ -1,4 +1,3 @@
-/evalbot/target
-/evalbot/run
 evalbot.toml
 .*.swp
+*.bk

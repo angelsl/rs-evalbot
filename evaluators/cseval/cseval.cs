@@ -56,86 +56,100 @@ namespace CSEval {
 
             ReportPrinter printer = new ConsoleReportPrinter();
 
-            var eval = new Evaluator(new CompilerContext(settings, printer));
-            eval.InteractiveBaseClass = typeof(InteractiveBase);
-            eval.DescribeTypeExpressions = true;
-            eval.WaitOnTask = true;
+            Func<Evaluator> newEval = () => {
+                Evaluator eval = new Evaluator(new CompilerContext(settings, printer)) {
+                    InteractiveBaseClass = typeof(InteractiveBase),
+                    DescribeTypeExpressions = true,
+                    WaitOnTask = true
+                };
+                return eval;
+            };
 
-            CSharpShell shell = new CSharpShell(eval, Console.OpenStandardInput(), Console.OpenStandardOutput());
+            CSharpShell shell = new CSharpShell(newEval, Console.OpenStandardInput(), Console.OpenStandardOutput());
             return shell.Run();
         }
     }
 
     public class CSharpShell {
-        private readonly Evaluator evaluator;
+        private readonly Func<Evaluator> newEval;
+        private readonly Dictionary<string, Evaluator> evaluators;
         private readonly Stream input;
         private readonly Stream output;
 
-        public CSharpShell(Evaluator evaluator, Stream input, Stream output) {
-            this.evaluator = evaluator;
+        public CSharpShell(Func<Evaluator> newEval, Stream input, Stream output) {
+            this.newEval = newEval;
             this.input = input;
             this.output = output;
+            this.evaluators = new Dictionary<String, Evaluator>();
         }
 
-        private string GetWork() {
-            return input.ReadLengthUTF8();
+        private Evaluator GetEvaluator(string key) {
+            if (evaluators.ContainsKey(key)) {
+                return evaluators[key];
+            } else {
+                Evaluator ev = newEval();
+                evaluators[key] = ev;
+                string nul = null;
+                Evaluate(key, "using System; using System.Linq; using System.Collections.Generic; using System.Collections;", 0, ref nul);
+                return ev;
+            }
         }
 
-        private void ReturnWork(bool success, string result) {
-            output.WriteByte((byte) (success ? 1 : 0));
+        private void ReturnWork(string result) {
             output.WriteLengthUTF8(result);
             output.Flush();
         }
 
-        private void InitializeUsing() {
-            string nul = null;
-            Evaluate("using System; using System.Linq; using System.Collections.Generic; using System.Collections;", 0, ref nul);
-        }
-
         public int Run() {
-            InitializeUsing();
-            string expr = null;
+            Dictionary<string, string> exprs = new Dictionary<string, string>();
             while (true) {
                 int timeout = input.ReadInt32();
-                string work = GetWork().Trim();
+                int keylen = input.ReadInt32();
+                int codelen = input.ReadInt32();
+                string key = input.ReadUTF8(keylen);
+                string work = input.ReadUTF8(codelen).Trim();
 
                 if (work == "") {
-                    ReturnWork(true, "");
+                    ReturnWork("");
                     continue;
                 }
 
-                expr = expr == null ? work : expr + "\n" + work;
                 string output = null;
-                expr = Evaluate(expr, timeout, ref output);
+                string evopt =
+                    Evaluate(key,
+                        !exprs.ContainsKey(key) ? work : exprs[key] + "\n" + work,
+                        timeout, ref output);
 
-                if (output != null || expr == null) { // exception or result
-                    ReturnWork(true, output ?? "");
-                } else if (output == null && expr != null) { // continuation
-                    ReturnWork(false, "(continue...)");
+                if (output != null || evopt == null) { // exception or result
+                    ReturnWork(output ?? "");
+                } else if (output == null && evopt != null) { // continuation
+                    ReturnWork("(continue...)");
                 }
+
+                exprs[key] = evopt;
             }
         }
 
-        private Tuple<string, bool, object> EvaluateHelper(string input, CancellationToken canceller) {
+        private Tuple<string, bool, object> EvaluateHelper(Evaluator ev, string input, CancellationToken canceller) {
             using (canceller.Register(Thread.CurrentThread.Abort)) {
                 bool result_set;
                 object result;
 
-                input = evaluator.Evaluate(input, out result, out result_set);
+                input = ev.Evaluate(input, out result, out result_set);
                 return Tuple.Create(input, result_set, result);
             }
         }
 
-        private string Evaluate(string input, int timeout, ref string output) {
+        private string Evaluate(string key, string input, int timeout, ref string output) {
             bool result_set;
             object result;
 
             Driver.Output.GetStringBuilder().Clear();
-            
+
             CancellationTokenSource canceller = new CancellationTokenSource();
 
             try {
-                Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(input, canceller.Token), canceller.Token);
+                Task<Tuple<string, bool, object>> t = Task.Run(() => EvaluateHelper(GetEvaluator(key), input, canceller.Token), canceller.Token);
                 if (timeout != 0) canceller.CancelAfter(timeout);
                 if (timeout == 0 || t.Wait(timeout)) {
                     Tuple<string, bool, object> resultTuple = t.Result;

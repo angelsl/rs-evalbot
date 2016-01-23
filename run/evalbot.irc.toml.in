@@ -1,7 +1,34 @@
+# $rehash, $restart <lang>, $quit
+command_prefix = "$"
+# only these people can use those commands
+owners = [""]
+
+[output]
+# maximum number of output lines to channel
+max_channel_lines = 2
+# maximum length of each line output to channel; excess is wrapped
+# note that wrapped lines are considered for the maximum lines
+max_channel_line_len = 200
+# maximum number of output lines in privmsg
+max_priv_lines = 10
+# prefix for output to channel (to prevent interaction with other bots)
+chan_output_prefix = ">"
+
+[[irc_networks]]
 # see https://aatxe.github.io/irc/irc/client/data/config/struct.Config.html
 owners = [""]
 nickname = "evaluator"
 server = "irc.not-real.net"
+port = 6697
+use_ssl = true
+channels = ["#channel"]
+encoding = "UTF-8"
+nick_password = ""
+
+[[irc_networks]]
+owners = [""]
+nickname = "evaluator2"
+server = "irc.not2-real.net"
 port = 6697
 use_ssl = true
 channels = ["#channel"]

@@ -11,7 +11,7 @@ This repository contains:
 ## Simple usage
 
 1. Compile the bot.
-   
+
    ````
    $ pushd evalbot; cargo build --release; popd
    ````
@@ -64,18 +64,17 @@ The bot will send, for each request, via standard input:
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| Timeout | Int32 | Timeout in milliseconds |
+| Timeout | Int32 | Timeout in milliseconds, or 0 for none |
+| Context key length | Int32 | Context key in bytes |
 | Code length | Int32 | Code length in bytes |
+| Context key | UTF-8 string | Key of the context to use |
 | Code | UTF-8 string | The code to evaluate |
 
 The bot expects, for each request, from standard output:
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
-| Success | UInt8 | Boolean (0 is false, 1 is true) |
 | Response length | Int32 | Response length in bytes |
 | Response | UTF-8 string | The response |
-
-The success field simply indicates whether the bot should prefix the response in channels with the channel output prefix (in `evalbot.toml`).
 
 Note that an evaluator will be killed by the bot if it doesn't respond within `1.5 * timeout` seconds.

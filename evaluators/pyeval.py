@@ -10,7 +10,7 @@ class PyEval(InteractiveInterpreter):
 class EmptyIO(io.RawIOBase):
     def __init__(self):
         io.RawIOBase(self)
-        
+
     def readinto(x):
         return 0
 
@@ -25,11 +25,12 @@ class Request:
         self.output = None
 
 def readinput(inbuf):
-    timeout, size = struct.unpack('II', inbuf.read(8))
-    return (timeout, inbuf.read(size).decode('utf-8'))
+    timeout, keysize, codesize = struct.unpack('III', inbuf.read(12))
+    key = inbuf.read(keysize).decode('utf-8')
+    code = inbuf.read(codesize).decode('utf-8')
+    return (timeout, key, code)
 
-def writeoutput(outbuf, success, opt):
-    outbuf.write(b'\x01' if success else b'\x00')
+def writeoutput(outbuf, opt):
     out = opt.encode('utf-8')
     outlen = struct.pack('I', len(out))
     outbuf.write(outlen)
@@ -37,9 +38,10 @@ def writeoutput(outbuf, success, opt):
     outbuf.flush()
 
 def worker(pipe):
-    etor = PyEval()
+    etors = {}
     while True:
-        code = pipe.recv()
+        code, key = pipe.recv()
+        etor = etors.setdefault(key, PyEval())
         try:
             out = io.StringIO()
             sys.stdout = out
@@ -54,12 +56,12 @@ def worker(pipe):
             traceback.print_exc(file=out)
         finally:
             pipe.send((result, out.getvalue()))
-    
+
 def main():
     inbuf = os.fdopen(0, mode='rb')
     outbuf = os.fdopen(1, mode='wb')
     stderr = os.fdopen(2, mode='wb')
-    
+
     # make it harder to hijack stdin/out
     dummy = EmptyIO()
     sys.stdout = dummy
@@ -70,20 +72,21 @@ def main():
     sys.__stdin__ = dummy
 
     while True:
-        codebuf = []
+        codebufs = {}
         pipe, childpipe = Pipe()
         thread = Process(target=worker, args=(childpipe,), daemon=True)
         thread.start()
         while True:
-            timeout, inp = readinput(inbuf)
+            timeout, key, inp = readinput(inbuf)
+            codebuf = codebufs.setdefault(key, [])
             codebuf.append(inp)
             source = '\n'.join(codebuf)
 
-            pipe.send(source)
+            pipe.send((source, key))
             if not pipe.poll(timeout / 1000):
                 # there is no result after timeout seconds
                 thread.terminate()
-                writeoutput(outbuf, False, "(timed out)")
+                writeoutput(outbuf, "(timed out)")
                 break
 
             try:
@@ -91,20 +94,20 @@ def main():
                 more, result = pipe.recv()
             except EOFError:
                 # yup, the pipe was closed.
-                writeoutput(outbuf, False, "(worker process died)")
+                writeoutput(outbuf, "(worker process died)")
                 break
             except:
-                writeoutput(outbuf, False, "(exception @ python main)")
+                writeoutput(outbuf, "(exception @ python main)")
                 traceback.print_exc(file=stderr)
                 break
 
             if not more:
                 codebuf = []
-                writeoutput(outbuf, True, result)
+                writeoutput(outbuf, result)
             elif more:
-                writeoutput(outbuf, False, "(continue...)")
+                writeoutput(outbuf, "(continue...)")
             else:
-                writeoutput(outbuf, False, "something weird happened")
+                writeoutput(outbuf, "something weird happened")
 
 if __name__ == "__main__":
     main()

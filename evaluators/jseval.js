@@ -6,43 +6,59 @@ var vm = require('vm');
 
 if (cluster.isMaster) {
     var data = new Buffer(0);
-    
+
     cluster.setupMaster({
         exec: __filename,
         silent: true,
         args: []
     });
     var worker = cluster.fork();
-    var outbuf = new Buffer(5);
-    
+    var outbuf = new Buffer(4);
+
     worker.on('message', function(message) {
-        outbuf.writeUInt8(message.success ? 1 : 0, 0);
-        outbuf.writeInt32LE(Buffer.byteLength(message.output, 'utf8'), 1);
+        outbuf.writeInt32LE(Buffer.byteLength(message, 'utf8'), 0);
         process.stdout.write(outbuf);
-        process.stdout.write(message.output, 'utf8');
+        process.stdout.write(message, 'utf8');
     });
-    
+
     process.stdin.on('data', function(chunk) {
         data = Buffer.concat([data, chunk]);
-        var len = 0;
-        if (data.length >= 8 && data.length >= 8 + (len = data.readInt32LE(4))) {
+        var key_len = 0;
+        var code_len = 0;
+        if (data.length >= 12
+            && data.length >= 12 + (key_len = data.readInt32LE(4)) + (code_len = data.readInt32LE(8))) {
             worker.send({
                 timeout: data.readInt32LE(0),
-                code: data.toString('utf8', 8, 8 + len)
+                key: data.toString('utf8', 12, 12 + key_len),
+                code: data.toString('utf8', 12 + key_len, 12 + key_len + code_len)
             });
             data = new Buffer(0);
         }
     });
 } else {
-    var context = vm.createContext({
-        console: console,
-        module: module,
-        process: process,
-        require: require
+    var getcontext = (function(newctx) {
+        var contexts = new Map();
+        return (function(key) {
+            if (!contexts.has(key)) {
+                var ctx = newctx();
+                contexts.set(key, ctx);
+                return ctx;
+            } else {
+                return contexts.get(key);
+            }
+        });
+    })(function() {
+        return {
+            context: vm.createContext({
+                console: console,
+                module: module,
+                process: process,
+                require: require
+            }),
+            buf: ""
+        };
     });
-    
     var stdout;
-    var buf = "";
     var callback = function(data) {
         stdout += data;
     };
@@ -56,13 +72,14 @@ if (cluster.isMaster) {
             callback.call(callback, string);
         };
     }(process.stderr.write));
-    
+
     process.on('message', function(message) {
         var finished = true;
-        buf += message.code;
+        var ctx = getcontext(message.key);
+        ctx.buf += message.code;
         stdout = "";
         try {
-            var out = vm.runInContext(buf, context, {
+            var out = vm.runInContext(ctx.buf, ctx.context, {
                 filename: 'stdin',
                 timeout: message.timeout
             });
@@ -78,11 +95,8 @@ if (cluster.isMaster) {
             }
         }
         if (finished) {
-            buf = "";
+            ctx.buf = "";
         }
-        process.send({
-            output: finished ? stdout : "(continue...)",
-            success: finished
-        });
+        process.send(finished ? stdout : "(continue...)");
     });
 }

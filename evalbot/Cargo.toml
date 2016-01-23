@@ -1,11 +1,10 @@
 [package]
 name = "evalbot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["angelsl <hidingfromhidden@gmail.com>"]
 
 [dependencies]
-irc = ">= 0.9.1"
-toml = ">= 0.1.23"
-rustc-serialize = ">= 0.3.16"
-byteorder = ">= 0.4.2"
+evalbotlib = { path = "../evalbotlib" }
+irc = { git = "https://github.com/angelsl/rs-irc.git", rev = "022b4af86c3e4656677a232e486f51e2cd4ca94c" }
 clippy = ">= 0.0.24"
+rustc-serialize = ">= 0.3.16"

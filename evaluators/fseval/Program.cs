@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -8,28 +9,32 @@ using Microsoft.FSharp.Core;
 
 namespace FSEval {
     public static class Program {
+        private static readonly StringReader DummyInput = new StringReader("");
         private static readonly Stream Input = Console.OpenStandardInput();
         private static readonly Stream Output = Console.OpenStandardOutput();
         private static readonly StringWriter EvalOutput = new StringWriter();
-        private static Shell.FsiEvaluationSession _evaluator;
+        private static readonly Dictionary<string, Shell.FsiEvaluationSession> _evaluators = new Dictionary<string, Shell.FsiEvaluationSession>();
         private static void Main(string[] args) {
-            StringReader input = new StringReader("");
             Console.SetOut(EvalOutput);
             Console.SetError(EvalOutput);
-            Console.SetIn(input);
-            _evaluator = Shell.FsiEvaluationSession.Create(
-                Shell.FsiEvaluationSession.GetDefaultConfiguration(),
-                new[] { "fsi", "--noninteractive" },
-                input, EvalOutput, EvalOutput, new FSharpOption<bool>(true));
+            Console.SetIn(DummyInput);
             Run();
         }
 
-        private static string GetWork() {
-            return Input.ReadLengthUTF8();
+        private static Shell.FsiEvaluationSession GetEvaluator(string key) {
+            if (_evaluators.ContainsKey(key)) {
+                return _evaluators[key];
+            } else {
+                Shell.FsiEvaluationSession ev = Shell.FsiEvaluationSession.Create(
+                    Shell.FsiEvaluationSession.GetDefaultConfiguration(),
+                    new[] { "fsi", "--noninteractive" },
+                    DummyInput, EvalOutput, EvalOutput, new FSharpOption<bool>(true));
+                _evaluators[key] = ev;
+                return ev;
+            }
         }
 
-        private static void ReturnWork(bool success, string result) {
-            Output.WriteByte((byte) (success ? 1 : 0));
+        private static void ReturnWork(string result) {
             Output.WriteLengthUTF8(result);
             Output.Flush();
         }
@@ -37,32 +42,36 @@ namespace FSEval {
         private static void Run() {
             while (true) {
                 int timeout = Input.ReadInt32();
-                string work = GetWork().Trim();
+                int keylen = Input.ReadInt32();
+                int codelen = Input.ReadInt32();
+                string key = Input.ReadUTF8(keylen);
+                string work = Input.ReadUTF8(codelen).Trim();
 
                 if (work == "") {
-                    ReturnWork(true, "");
+                    ReturnWork("");
                     continue;
                 }
 
-                ReturnWork(true, Evaluate(work, timeout) ?? "");
+                ReturnWork(Evaluate(key, work, timeout) ?? "");
             }
         }
 
-        private static void EvaluateHelper(string input, CancellationToken canceller) {
+        private static void EvaluateHelper(Shell.FsiEvaluationSession ev, string input, CancellationToken canceller) {
             using (canceller.Register(Thread.CurrentThread.Abort)) {
                 try {
-                    _evaluator.EvalInteraction(input);
+                    ev.EvalInteraction(input);
                 } catch (Exception e) {
                     EvalOutput.WriteLine(e.InnerException ?? e);
                 }
             }
         }
 
-        private static string Evaluate(string input, int timeout) {
+        private static string Evaluate(string key, string input, int timeout) {
+            Shell.FsiEvaluationSession ev = GetEvaluator(key);
             EvalOutput.GetStringBuilder().Clear();
             CancellationTokenSource canceller = new CancellationTokenSource();
             try {
-                Task t = Task.Run(() => EvaluateHelper(input, canceller.Token), canceller.Token);
+                Task t = Task.Run(() => EvaluateHelper(ev, input, canceller.Token), canceller.Token);
                 if (timeout != 0) {
                     canceller.CancelAfter(timeout);
                     if (!t.Wait(timeout)) {
