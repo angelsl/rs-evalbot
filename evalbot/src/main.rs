@@ -7,8 +7,7 @@ extern crate rustc_serialize;
 
 use std::thread;
 use std::time::Duration;
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 
 use backend::{EvalSvc, EvalSvcCfg, Response, util};
 
@@ -20,6 +19,14 @@ macro_rules! send_msg {
     ($conn:expr, $dest:expr, $line:expr) => {
         if let Err(x) = $conn.send_privmsg($dest, $line) {
             println!("failed to send message: {}", x)
+        }
+    };
+}
+
+macro_rules! send_notice {
+    ($conn:expr, $dest:expr, $line:expr) => {
+        if let Err(x) = $conn.send_notice($dest, $line) {
+            println!("failed to send notice: {}", x)
         }
     };
 }
@@ -52,7 +59,6 @@ fn main() {
             return;
         }
     };
-    let quit_handle = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
 
     {
@@ -64,31 +70,28 @@ fn main() {
         thread::spawn(move || eval_worker(svc, rx, ocfg));
     }
 
-    for (cfg, jh) in config.irc_networks
-                           .iter()
-                           .filter_map(|cfg| {
-                               match ircp::IrcServer::from_config(cfg.clone()) {
-                                   Ok(conn) => Some((cfg, conn)),
-                                   Err(ref err) => {
-                                       println!("failed to create IRC connection from Config {:#?}: {:?}", cfg, err);
-                                       None
-                                   }
-                               }
-                           })
-                           .enumerate()
-                           .map(|(k, (cfg, nwk))| {
-                               (cfg,
-                                start_worker(nwk,
-                                             tx.clone(),
-                                             config.owners.clone(),
-                                             config.command_prefix.clone(),
-                                             quit_handle.clone(),
-                                             format!("{}", k)))
-                           })
-                           .collect::<Vec<_>>() {
-        util::ignore(jh.join());
-        println!("disconnected as {:?} from {:?}", cfg.nickname, cfg.server);
+    let (qtx, qrx) = mpsc::channel();
+
+    for (k, nwk) in config.irc_networks
+                          .iter()
+                          .filter_map(|cfg| {
+                              match ircp::IrcServer::from_config(cfg.clone()) {
+                                  Ok(conn) => Some(conn),
+                                  Err(ref err) => {
+                                      println!("failed to create IRC connection from Config {:#?}: {:?}", cfg, err);
+                                      None
+                                  }
+                              }
+                          })
+                          .enumerate() {
+        start_worker(nwk,
+                     tx.clone(),
+                     config.owners.clone(),
+                     config.command_prefix.clone(),
+                     qtx.clone(),
+                     format!("{}", k));
     }
+    util::ignore(qrx.recv());
 }
 
 fn start_evalsvc() -> Result<EvalSvc, ()> {
@@ -106,7 +109,7 @@ fn start_worker(conn: NetIrcServer,
     svc: EvalWorkerSender,
     owners: Vec<String>,
     cmd_prefix: String,
-    quit_handle: Arc<AtomicBool>,
+    quit_handle: mpsc::Sender<()>,
     conn_hash: String)
                 -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -148,6 +151,9 @@ enum MessageData {
     Rehash,
     Restart {
         lang: String
+    },
+    Raw {
+        msg: String
     }
 }
 
@@ -208,6 +214,15 @@ fn try_cmd(msg: &str, cmd_prefix: &str) -> Option<MessageData> {
             "quit" => Some(MessageData::Quit),
             "rehash" => Some(MessageData::Rehash),
             "restart" if !args.is_empty() => Some(MessageData::Restart { lang: args[0].to_owned() }),
+            "raw" if !args.is_empty() => {
+                Some(MessageData::Raw {
+                    msg: {
+                        let mut m = args.join(" ");
+                        m.push_str("\r\n");
+                        m
+                    }
+                })
+            }
             _ => None,
         }
     } else {
@@ -233,7 +248,7 @@ fn worker(conn: NetIrcServer,
     tx: EvalWorkerSender,
     owners: Vec<String>,
     cmd_prefix: String,
-    quit_handle: Arc<AtomicBool>,
+    quit_handle: mpsc::Sender<()>,
     conn_hash: String) {
     'connection: loop {
         println!("connecting to to {:?} as {:?}", conn.config().server, conn.config().nickname);
@@ -243,30 +258,37 @@ fn worker(conn: NetIrcServer,
         }
         println!("connected to {:?} as {:?}", conn.config().server, conn.config().nickname);
         for msg in conn.iter() {
-            if quit_handle.load(Ordering::Relaxed) {
-                break 'connection;
-            }
             let msg = match msg {
                 Ok(x) => x,
                 Err(_) => continue,
             };
 
             if let Some(msg) = parse_msg(&conn_hash, &msg, &owners, &cmd_prefix) {
-                let conn = conn.clone();
                 println!("M: {:?}", msg);
                 match msg.data {
                     MessageData::EvalReq { .. } | MessageData::Rehash | MessageData::Restart { .. } => {
+                        let conn = conn.clone();
                         util::ignore(tx.send((msg, Box::new(move |to, r| send_msg!(conn, to, r)))))
                     }
+                    MessageData::Raw { msg: raw_msg } => {
+                        match raw_msg.parse::<ircp::Message>() {
+                            Ok(raw_msg) => {
+                                println!("{} sent raw: {:?}", msg.sender.sender, raw_msg);
+                                if let Err(err) = conn.send(raw_msg) {
+                                    send_notice!(conn, &msg.sender.sender, &format!("error: {:?}", err))
+                                }
+                            }
+                            Err(err) => send_notice!(conn, &msg.sender.sender, &format!("error: {:?}", err)),
+                        };
+                    }
                     MessageData::Quit => {
-                        quit_handle.store(true, Ordering::Relaxed);
+                        util::ignore(quit_handle.send(()));
                         break 'connection;
                     }
                 }
             }
         }
     }
-    util::ignore(conn.send_quit("Quitting"));
 }
 
 fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
