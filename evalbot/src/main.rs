@@ -304,7 +304,7 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
         match msg.data {
             MessageData::EvalReq { lang, code, timeout } => {
                 let code = match mlbufs.remove(&key!(lang)) {
-                    Some(mut buf) => { buf.push_str(&code); buf }
+                    Some(mut buf) => { buf.push_str(&code); buf.push_str("\n"); buf }
                     None => code
                 };
                 let ocfg = ocfg.clone();
@@ -333,6 +333,7 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
                 let key = key!(lang);
                 if let Some(buf) = mlbufs.get_mut(&key) {
                     buf.push_str(&code);
+                    buf.push_str("\n");
                     continue;
                 }
                 mlbufs.insert(key, code);
