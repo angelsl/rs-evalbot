@@ -1,11 +1,11 @@
 [root]
 name = "evalbotlib"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "clippy 0.0.37 (registry+https://github.com/rust-lang/crates.io-index)",
- "crossbeam 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-serialize 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crossbeam 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc-serialize 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "toml 0.1.27 (registry+https://github.com/rust-lang/crates.io-index)",
  "zombie 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "crossbeam"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -36,12 +36,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "nom"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "rustc-serialize"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -49,7 +49,7 @@ name = "semver"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "nom 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -57,7 +57,7 @@ name = "toml"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "rustc-serialize 0.3.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustc-serialize 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
