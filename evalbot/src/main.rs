@@ -364,7 +364,7 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
 fn sanitise_output(input: &str, prefix: Option<&str>, max_len: usize, max_lines: usize) -> Vec<String> {
     let (mut ret, initial_lines): (Vec<String>, usize) = {
         let med = input.lines()
-                       .map(|l| l.trim())
+                       .map(|l| l.trim_right())
                        .filter(|l| !l.is_empty())
                        .flat_map(|l| l.split(util::LengthPattern(max_len)))
                        .collect::<Vec<_>>();
