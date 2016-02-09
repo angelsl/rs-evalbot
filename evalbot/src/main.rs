@@ -160,7 +160,9 @@ enum MessageData {
         lang: String,
         code: String
     },
-    CancelMultiline { lang: String }
+    CancelMultiline {
+        lang: String
+    }
 }
 
 unsafe impl Sync for IrcMessage {}
@@ -196,11 +198,13 @@ fn parse_msg(conn_hash: &str, message: &ircp::Message, owners: &[String], cmd_pr
 
         Some(IrcMessage {
             sender: sender,
-            data: match &message[tok[0].len() .. tok[0].len() + 1] {
+            data: match &message[tok[0].len()..tok[0].len() + 1] {
                 "$" => MessageData::Multiline { lang: tok[0].to_owned(), code: tok[1].to_owned() },
                 ">" => MessageData::EvalReq { lang: tok[0].to_owned(), code: tok[1].to_owned(), timeout: true },
-                "#" if is_owner => MessageData::EvalReq { lang: tok[0].to_owned(), code: tok[1].to_owned(), timeout: false },
-                _ => return None
+                "#" if is_owner => {
+                    MessageData::EvalReq { lang: tok[0].to_owned(), code: tok[1].to_owned(), timeout: false }
+                }
+                _ => return None,
             }
         })
     } else {
@@ -222,7 +226,7 @@ fn try_cmd(msg: &str, cmd_prefix: &str, owner: bool) -> Option<MessageData> {
                         m
                     }
                 })
-            },
+            }
             "cancel" if !args.is_empty() => Some(MessageData::CancelMultiline { lang: args[0].to_owned() }),
             _ => None,
         }
@@ -267,7 +271,11 @@ fn worker(conn: NetIrcServer,
             if let Some(msg) = parse_msg(&conn_hash, &msg, &owners, &cmd_prefix) {
                 println!("M: {:?}", msg);
                 match msg.data {
-                    MessageData::EvalReq { .. } | MessageData::Rehash | MessageData::Restart { .. } | MessageData::Multiline { .. } | MessageData::CancelMultiline { .. } => {
+                    MessageData::EvalReq { .. } |
+                    MessageData::Rehash |
+                    MessageData::Restart { .. } |
+                    MessageData::Multiline { .. } |
+                    MessageData::CancelMultiline { .. } => {
                         let conn = conn.clone();
                         util::ignore(tx.send((msg, Box::new(move |to, r| send_msg!(conn, to, r)))))
                     }
@@ -304,8 +312,12 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
         match msg.data {
             MessageData::EvalReq { lang, code, timeout } => {
                 let code = match mlbufs.remove(&key!(lang)) {
-                    Some(mut buf) => { buf.push_str(&code); buf.push_str("\n"); buf }
-                    None => code
+                    Some(mut buf) => {
+                        buf.push_str(&code);
+                        buf.push_str("\n");
+                        buf
+                    }
+                    None => code,
                 };
                 let ocfg = ocfg.clone();
                 let sender = msg.sender.clone();
@@ -341,7 +353,7 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
             MessageData::CancelMultiline { lang } => {
                 match mlbufs.remove(&key!(lang)) {
                     Some(_) => reply!(&format!("{}: OK, cleared {} buffer", msg.sender.sender, lang)),
-                    None => reply!(&format!("{}: no buffer for {}", msg.sender.sender, lang))
+                    None => reply!(&format!("{}: no buffer for {}", msg.sender.sender, lang)),
                 }
             }
             _ => println!("invalid thing sent to eval_worker?"),
