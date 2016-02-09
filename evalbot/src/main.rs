@@ -8,6 +8,7 @@ extern crate rustc_serialize;
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
+use std::collections::HashMap;
 
 use backend::{EvalSvc, EvalSvcCfg, Response, util};
 
@@ -117,7 +118,7 @@ fn start_worker(conn: NetIrcServer,
     })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct MessageSource {
     chan: Option<String>,
     sender: String,
@@ -154,7 +155,12 @@ enum MessageData {
     },
     Raw {
         msg: String
-    }
+    },
+    Multiline {
+        lang: String,
+        code: String
+    },
+    CancelMultiline { lang: String }
 }
 
 unsafe impl Sync for IrcMessage {}
@@ -178,43 +184,37 @@ fn parse_msg(conn_hash: &str, message: &ircp::Message, owners: &[String], cmd_pr
             }
         };
 
-        if is_owner {
-            if let Some(x) = try_cmd(&message, cmd_prefix) {
-                return Some(IrcMessage { sender: sender, data: x });
-            }
+        if let Some(x) = try_cmd(&message, cmd_prefix, is_owner) {
+            return Some(IrcMessage { sender: sender, data: x });
         }
 
-        let tok: Vec<&str> = message.trim().splitn(2, '>').collect();
-        if tok.len() == 2 {
-            return Some(IrcMessage {
-                sender: sender,
-                data: MessageData::EvalReq { timeout: true, lang: tok[0].to_owned(), code: tok[1].to_owned() }
-            });
-        } else if !is_owner {
+        let message = message.trim();
+        let tok: Vec<&str> = message.splitn(2, |c| c == '>' || c == '#' || c == '$').collect();
+        if tok.len() < 2 {
             return None;
         }
 
-        let tok: Vec<&str> = message.trim().splitn(2, '#').collect();
-        if tok.len() == 2 {
-            Some(IrcMessage {
-                sender: sender,
-                data: MessageData::EvalReq { timeout: false, lang: tok[0].to_owned(), code: tok[1].to_owned() }
-            })
-        } else {
-            None
-        }
+        Some(IrcMessage {
+            sender: sender,
+            data: match &message[tok[0].len() .. tok[0].len() + 1] {
+                "$" => MessageData::Multiline { lang: tok[0].to_owned(), code: tok[1].to_owned() },
+                ">" => MessageData::EvalReq { lang: tok[0].to_owned(), code: tok[1].to_owned(), timeout: true },
+                "#" if is_owner => MessageData::EvalReq { lang: tok[0].to_owned(), code: tok[1].to_owned(), timeout: false },
+                _ => return None
+            }
+        })
     } else {
         None
     }
 }
 
-fn try_cmd(msg: &str, cmd_prefix: &str) -> Option<MessageData> {
+fn try_cmd(msg: &str, cmd_prefix: &str, owner: bool) -> Option<MessageData> {
     if let Some((cmd, args)) = parse_cmd(msg, cmd_prefix) {
         match &cmd as &str {
-            "quit" => Some(MessageData::Quit),
-            "rehash" => Some(MessageData::Rehash),
-            "restart" if !args.is_empty() => Some(MessageData::Restart { lang: args[0].to_owned() }),
-            "raw" if !args.is_empty() => {
+            "quit" if owner => Some(MessageData::Quit),
+            "rehash" if owner => Some(MessageData::Rehash),
+            "restart" if owner && !args.is_empty() => Some(MessageData::Restart { lang: args[0].to_owned() }),
+            "raw" if owner && !args.is_empty() => {
                 Some(MessageData::Raw {
                     msg: {
                         let mut m = args.join(" ");
@@ -222,7 +222,8 @@ fn try_cmd(msg: &str, cmd_prefix: &str) -> Option<MessageData> {
                         m
                     }
                 })
-            }
+            },
+            "cancel" if !args.is_empty() => Some(MessageData::CancelMultiline { lang: args[0].to_owned() }),
             _ => None,
         }
     } else {
@@ -266,7 +267,7 @@ fn worker(conn: NetIrcServer,
             if let Some(msg) = parse_msg(&conn_hash, &msg, &owners, &cmd_prefix) {
                 println!("M: {:?}", msg);
                 match msg.data {
-                    MessageData::EvalReq { .. } | MessageData::Rehash | MessageData::Restart { .. } => {
+                    MessageData::EvalReq { .. } | MessageData::Rehash | MessageData::Restart { .. } | MessageData::Multiline { .. } | MessageData::CancelMultiline { .. } => {
                         let conn = conn.clone();
                         util::ignore(tx.send((msg, Box::new(move |to, r| send_msg!(conn, to, r)))))
                     }
@@ -292,12 +293,20 @@ fn worker(conn: NetIrcServer,
 }
 
 fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
+    let mut mlbufs: HashMap<(MessageSource, String), String> = HashMap::new();
     while let Ok((msg, callback)) = rx.recv() {
         macro_rules! reply {
             ($x:expr) => { callback(msg.sender.reply_to(), $x); }
         }
+        macro_rules! key {
+            ($x:expr) => { (msg.sender.clone(), $x.clone()) }
+        }
         match msg.data {
             MessageData::EvalReq { lang, code, timeout } => {
+                let code = match mlbufs.remove(&key!(lang)) {
+                    Some(mut buf) => { buf.push_str(&code); buf }
+                    None => code
+                };
                 let ocfg = ocfg.clone();
                 let sender = msg.sender.clone();
                 svc.eval(&lang,
@@ -318,6 +327,20 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
                 match svc.restart(&lang) {
                     Ok(_) => reply!(&format!("restarted {}", lang)),
                     Err(_) => reply!(&format!("no such language {}", lang)),
+                }
+            }
+            MessageData::Multiline { lang, code } => {
+                let key = key!(lang);
+                if let Some(buf) = mlbufs.get_mut(&key) {
+                    buf.push_str(&code);
+                    continue;
+                }
+                mlbufs.insert(key, code);
+            }
+            MessageData::CancelMultiline { lang } => {
+                match mlbufs.remove(&key!(lang)) {
+                    Some(_) => reply!(&format!("{}: OK, cleared {} buffer", msg.sender.sender, lang)),
+                    None => reply!(&format!("{}: no buffer for {}", msg.sender.sender, lang))
                 }
             }
             _ => println!("invalid thing sent to eval_worker?"),
