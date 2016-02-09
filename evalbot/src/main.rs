@@ -341,11 +341,11 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
                     Err(_) => reply!(&format!("no such language {}", lang)),
                 }
             }
-            MessageData::Multiline { lang, code } => {
+            MessageData::Multiline { lang, mut code } => {
                 let key = key!(lang);
+                code.push_str("\n");
                 if let Some(buf) = mlbufs.get_mut(&key) {
                     buf.push_str(&code);
-                    buf.push_str("\n");
                     continue;
                 }
                 mlbufs.insert(key, code);
