@@ -102,7 +102,7 @@ def main():
                 break
 
             if not more:
-                codebuf = []
+                codebuf.clear()
                 writeoutput(outbuf, result)
             elif more:
                 writeoutput(outbuf, "(continue...)")
