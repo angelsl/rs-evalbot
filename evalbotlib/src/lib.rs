@@ -13,23 +13,21 @@ use crossbeam::sync::MsQueue;
 
 mod eval;
 mod playpen;
-mod worker;
 pub mod util;
 
 pub type CallbackFnBox = Box<FnBox(Response) + Send>;
 
 #[derive(Clone, RustcDecodable, Default, PartialEq, Debug)]
 pub struct EvalSvcCfg {
-    pub sandbox_dir: String,
-    pub playpen_timeout: usize,
-    pub playpen_args: Vec<String>,
+    pub timeout: usize,
     pub eval_threads: usize,
     pub languages: Vec<LangCfg>
 }
 
 #[derive(Clone, RustcDecodable, Default, PartialEq, Debug)]
 pub struct LangCfg {
-    pub syscalls_path: String,
+    pub timeout: Option<usize>,
+    pub timeout_opt: Option<String>,
     pub binary_path: String,
     pub binary_args: Vec<String>,
     pub persistent: bool,
@@ -40,6 +38,22 @@ pub struct LangCfg {
 
 unsafe impl Send for EvalSvcCfg {}
 unsafe impl Send for LangCfg {}
+
+impl LangCfg {
+    fn args(&self, with_timeout: bool) -> Vec<String> {
+        if let (&Some(ref opt), &Some(timeout)) = (&self.timeout_opt, &self.timeout) {
+            self.binary_args.iter().filter_map(|x| {
+                match x as &str {
+                    "{TIMEOUT}" if with_timeout => Some(format!("{}{}", opt, timeout)),
+                    "{TIMEOUT}" if !with_timeout => None,
+                    _ => Some(x.to_owned())
+                }
+            }).collect::<Vec<String>>()
+        } else {
+            self.binary_args.clone()
+        }
+    }
+}
 
 pub enum Response {
     NoSuchLanguage,
@@ -61,14 +75,18 @@ enum Message {
 
 impl EvalSvc {
     pub fn new(cfg: EvalSvcCfg) -> Self {
+        let timeout = cfg.timeout;
         let langs = cfg.languages
-                       .iter()
+                       .into_iter()
+                       .map(|x| {
+                            LangCfg {
+                                timeout: Some(if let Some(t) = x.timeout { t } else { timeout }),
+                                ..x
+                            }
+                       })
                        .map(|x| {
                            (x.name.clone(),
-                            eval::new(x.clone(),
-                                      cfg.playpen_args.clone(),
-                                      cfg.sandbox_dir.clone(),
-                                      cfg.playpen_timeout.clone()))
+                            eval::new(x))
                        })
                        .collect::<HashMap<_, _>>();
         let ret = EvalSvc {

@@ -15,9 +15,6 @@ use {eval, playpen};
 #[derive(Clone)]
 pub struct ReplLang {
     cfg: ::LangCfg,
-    playpen_args: Vec<String>,
-    sandbox_path: String,
-    timeout: usize,
     process: Arc<Mutex<Child>>,
     stdinout: Arc<Mutex<(ChildStdin, ChildStdout)>>
 }
@@ -31,13 +28,9 @@ impl std::fmt::Debug for ReplLang {
 unsafe impl Send for ReplLang {}
 unsafe impl Sync for ReplLang {}
 
-fn spawn_child(cfg: &::LangCfg, playpen_args: &[String], sandbox_path: &str) -> (Child, (ChildStdin, ChildStdout)) {
-    let mut child = playpen::spawn(sandbox_path,
-                                   &cfg.binary_path,
-                                   &cfg.syscalls_path,
-                                   playpen_args,
-                                   &cfg.binary_args,
-                                   None,
+fn spawn_child(cfg: &::LangCfg) -> (Child, (ChildStdin, ChildStdout)) {
+    let mut child = playpen::spawn(&cfg.binary_path,
+                                   &cfg.args(false),
                                    false)
         .unwrap();
     let stdinout = (child.stdin.take().unwrap(), child.stdout.take().unwrap());
@@ -45,13 +38,10 @@ fn spawn_child(cfg: &::LangCfg, playpen_args: &[String], sandbox_path: &str) -> 
 }
 
 impl ReplLang {
-    pub fn new(cfg: ::LangCfg, playpen_args: Vec<String>, sandbox_path: String, timeout: usize) -> Self {
-        let child = spawn_child(&cfg, &playpen_args, &sandbox_path);
+    pub fn new(cfg: ::LangCfg) -> Self {
+        let child = spawn_child(&cfg);
         ReplLang {
             cfg: cfg,
-            playpen_args: playpen_args,
-            sandbox_path: sandbox_path,
-            timeout: timeout,
             process: Arc::new(Mutex::new(child.0)),
             stdinout: Arc::new(Mutex::new(child.1))
         }
@@ -62,7 +52,7 @@ impl ReplLang {
         let stdinout = self.stdinout.clone();
         let code_bytes = code.as_bytes().to_owned();
         let key_bytes = context_key.unwrap_or("").as_bytes().to_owned();
-        let timeout = if with_timeout { self.timeout } else { 0 };
+        let timeout = if with_timeout { self.cfg.timeout.unwrap() } else { 0 };
         {
             // wait for response
             let tx = txo.clone();
@@ -106,7 +96,7 @@ impl ReplLang {
 
         if with_timeout {
             // timeout
-            let timeout = (self.timeout as f64 * 1.5) as u64;
+            let timeout = (self.cfg.timeout.unwrap() as f64 * 1.5) as u64;
             thread::spawn(move || {
                 thread::sleep(std::time::Duration::new(timeout, 0));
                 ignore(txo.send(Err("timed out waiting for evaluator response".to_owned())));
@@ -121,7 +111,7 @@ impl ReplLang {
 
     fn restart_process(&self, process: &mut Child, stdinout: &mut (ChildStdin, ChildStdout)) {
         kill_process(process);
-        let spawn_result = spawn_child(&self.cfg, &self.playpen_args, &self.sandbox_path);
+        let spawn_result = spawn_child(&self.cfg);
         *process = spawn_result.0;
         *stdinout = spawn_result.1;
     }

@@ -2,19 +2,13 @@ use {eval, playpen, std};
 
 #[derive(Clone)]
 pub struct CompilerLang {
-    cfg: ::LangCfg,
-    playpen_args: Vec<String>,
-    sandbox_path: String,
-    timeout: usize
+    cfg: ::LangCfg
 }
 
 impl CompilerLang {
-    pub fn new(cfg: ::LangCfg, playpen_args: Vec<String>, sandbox_path: String, timeout: usize) -> Self {
+    pub fn new(cfg: ::LangCfg) -> Self {
         CompilerLang {
-            cfg: cfg,
-            playpen_args: playpen_args,
-            sandbox_path: sandbox_path,
-            timeout: timeout
+            cfg: cfg
         }
     }
 }
@@ -25,13 +19,9 @@ unsafe impl Sync for CompilerLang {}
 impl eval::Lang for CompilerLang {
     fn eval(&self, code: &str, with_timeout: bool, _: Option<&str>) -> Result<String, String> {
         let code = eval::wrap_code(code, &self.cfg);
-        playpen::exec_wait(&self.sandbox_path,
-                           &self.cfg.binary_path,
-                           &self.cfg.syscalls_path,
-                           &self.playpen_args,
-                           &self.cfg.binary_args,
-                           &code,
-                           if with_timeout { Some(self.timeout) } else { None })
+        playpen::exec_wait(&self.cfg.binary_path,
+                           &self.cfg.args(with_timeout),
+                           &code)
     }
 
     fn is_persistent(&self) -> bool {

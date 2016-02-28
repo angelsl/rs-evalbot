@@ -7,11 +7,11 @@ pub trait Lang: Debug + Send + Sync {
     fn is_persistent(&self) -> bool;
 }
 
-pub fn new(cfg: ::LangCfg, playpen_args: Vec<String>, sandbox_path: String, timeout: usize) -> Arc<Lang> {
+pub fn new(cfg: ::LangCfg) -> Arc<Lang> {
     if cfg.persistent {
-        Arc::new(persistent::ReplLang::new(cfg, playpen_args, sandbox_path, timeout))
+        Arc::new(persistent::ReplLang::new(cfg))
     } else {
-        Arc::new(compiler::CompilerLang::new(cfg, playpen_args, sandbox_path, timeout))
+        Arc::new(compiler::CompilerLang::new(cfg))
     }
 }
 

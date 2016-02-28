@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 use backend::{EvalSvc, EvalSvcCfg, Response, util};
 
-use self::irclib::client::server::NetIrcServer;
 use self::irclib::client::prelude as ircp;
 use self::irclib::client::prelude::{Server, ServerExt};
 
@@ -106,7 +105,7 @@ fn start_evalsvc() -> Result<EvalSvc, ()> {
     Ok(EvalSvc::new(evalcfg))
 }
 
-fn start_worker(conn: NetIrcServer,
+fn start_worker(conn: ircp::IrcServer,
     svc: EvalWorkerSender,
     owners: Vec<String>,
     cmd_prefix: String,
@@ -249,7 +248,7 @@ fn parse_cmd(msg: &str, cmd_prefix: &str) -> Option<(String, Vec<String>)> {
           tok.into_iter().skip(1).map(|x| x.to_owned()).collect::<Vec<String>>()))
 }
 
-fn worker(conn: NetIrcServer,
+fn worker(conn: ircp::IrcServer,
     tx: EvalWorkerSender,
     owners: Vec<String>,
     cmd_prefix: String,
