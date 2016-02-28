@@ -52,6 +52,7 @@ prctl
 pread64
 read
 readlink
+rename
 rmdir
 rt_sigaction
 rt_sigprocmask
@@ -63,6 +64,7 @@ setrlimit
 sigaltstack
 stat
 statfs
+sysinfo
 tgkill
 umask
 unlink
