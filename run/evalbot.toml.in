@@ -9,7 +9,7 @@ name = "rs"
 # path to binary
 binary_path = "/usr/local/lib/evalbot/playpen"
 # arguments to binary
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -48,7 +48,7 @@ code_after = '''
 [[languages]]
 name = "rs!"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -61,7 +61,7 @@ persistent = false
 [[languages]]
 name = "gcc"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -74,7 +74,7 @@ persistent = false
 [[languages]]
 name = "c"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -87,7 +87,7 @@ persistent = false
 [[languages]]
 name = "g++"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -100,7 +100,7 @@ persistent = false
 [[languages]]
 name = "c++"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
     "-c", '''
@@ -113,7 +113,7 @@ persistent = false
 [[languages]]
 name = "cs"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=mono_syscalls",
     "--", "/usr/bin/mono", "/usr/local/lib/evalbot/cseval.exe"]
 persistent = true
@@ -122,7 +122,7 @@ persistent = true
 name = "py"
 syscalls_path = "python_syscalls"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128", "-L",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128", "-L",
     "--syscalls-file=python_syscalls",
     "--", "/usr/bin/python", "/usr/local/lib/evalbot/pyeval.py"]
 persistent = true
@@ -130,7 +130,7 @@ persistent = true
 [[languages]]
 name = "fs"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=mono_syscalls",
     "--", "/usr/bin/mono", "/usr/local/lib/evalbot/fseval/fseval.exe"]
 persistent = true
@@ -138,7 +138,7 @@ persistent = true
 [[languages]]
 name = "js"
 binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=node_syscalls",
     "--", "/usr/bin/node", "/usr/local/lib/evalbot/jseval.js"]
 persistent = true
@@ -146,7 +146,7 @@ persistent = true
 #[[languages]]
 #name = "sc"
 #binary_path = "/usr/local/lib/evalbot/playpen"
-#binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:w", "--memory-limit=128",
+#binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
 #   "--syscalls-file=scala_syscalls",
 #   "--", "/usr/lib/jvm/default-runtime/bin/java",
 #   "-Xms32M", "-Xmx384M",
