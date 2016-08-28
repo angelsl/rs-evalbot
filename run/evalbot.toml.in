@@ -11,17 +11,17 @@ binary_path = "/usr/local/lib/evalbot/playpen"
 # arguments to binary
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
+    "{TIMEOUT}",
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
-cat <<EOF | rustc - -o ./out "$@" 2>&1
+cat <<EOF | rustc - -o ./out -C opt-level=2 -A warnings "$@" 2>&1
 $(cat)
 static VERSION: &'static str = "$(rustc -V | head -1 | tr -d '\n')";
 EOF
 exec ./out 2>&1
-''', "evaluate", "-C", "opt-level=2", "-A", "warnings"]
-# whether this is a daemon/repl (persistent) or compile-and-run (not)
-persistent = false
+''']
+binary_timeout_arg = "--timeout="
 # string to prepend to code, optional
 code_before = '''
 #![feature(core_intrinsics)]
@@ -53,95 +53,82 @@ binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/ur
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
-rustc - -o ./out "$@" 2>&1
+rustc - -o ./out -C opt-level=2 -A warnings "$@" 2>&1
 exec ./out 2>&1
-''', "evaluate", "-C", "opt-level=2"]
-persistent = false
+''']
+binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "gcc"
 binary_path = "/usr/local/lib/evalbot/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
+    "{TIMEOUT}",
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
 echo -n "#include <stdio.h>\n$(cat)" | gcc -w -x c - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
-persistent = false
+binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "c"
 binary_path = "/usr/local/lib/evalbot/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
+    "{TIMEOUT}",
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
 echo -n "#include <stdio.h>\n$(cat)" | clang -w -std=c11 -x c - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
-persistent = false
+binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "g++"
 binary_path = "/usr/local/lib/evalbot/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
+    "{TIMEOUT}",
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
 echo -n "#include <iostream>\n$(cat)" | g++ -w -x c++ - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
-persistent = false
+binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "c++"
 binary_path = "/usr/local/lib/evalbot/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
+    "{TIMEOUT}",
     "--", "/usr/bin/dash",
     "-c", '''
 set -o errexit
 echo -n "#include <iostream>\n$(cat)" | clang++ -w -std=c++11 -x c++ - -O3 -o out 2>&1
 exec ./out 2>&1
 ''']
-persistent = false
+binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "cs"
-binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
-    "--syscalls-file=mono_syscalls",
-    "--", "/usr/bin/mono", "/usr/local/lib/evalbot/cseval.exe"]
-persistent = true
+socket_address = "/run/eval/cseval.sock"
 
 [[languages]]
 name = "py"
-syscalls_path = "python_syscalls"
-binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128", "-L",
-    "--syscalls-file=python_syscalls",
-    "--", "/usr/bin/python", "/usr/local/lib/evalbot/pyeval.py"]
-persistent = true
+socket_address = "/run/eval/pyeval.sock"
 
 [[languages]]
 name = "fs"
-binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
-    "--syscalls-file=mono_syscalls",
-    "--", "/usr/bin/mono", "/usr/local/lib/evalbot/fseval/fseval.exe"]
-persistent = true
+socket_address = "/run/eval/fseval.sock"
 
 [[languages]]
 name = "js"
-binary_path = "/usr/local/lib/evalbot/playpen"
-binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
-    "--syscalls-file=node_syscalls",
-    "--", "/usr/bin/node", "/usr/local/lib/evalbot/jseval.js"]
-persistent = true
+socket_address = "/run/eval/jseval.sock"
 
 #[[languages]]
 #name = "sc"
