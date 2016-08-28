@@ -1,18 +1,16 @@
-#![feature(plugin, pattern, fnbox)]
+#![feature(plugin, pattern, fnbox, question_mark, stmt_expr_attributes)]
 #![plugin(clippy)]
 
 extern crate crossbeam;
 extern crate rustc_serialize;
 
-use std::sync::Arc;
-use std::collections::HashMap;
+use crossbeam::sync::MsQueue;
 use std::boxed::FnBox;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::thread;
 
-use crossbeam::sync::MsQueue;
-
 mod eval;
-mod playpen;
 pub mod util;
 
 pub type CallbackFnBox = Box<FnBox(Response) + Send>;
@@ -28,32 +26,18 @@ pub struct EvalSvcCfg {
 pub struct LangCfg {
     pub timeout: Option<usize>,
     pub timeout_opt: Option<String>,
-    pub binary_path: String,
-    pub binary_args: Vec<String>,
-    pub persistent: bool,
     pub name: String,
     pub code_before: Option<String>,
-    pub code_after: Option<String>
+    pub code_after: Option<String>,
+    pub binary_path: Option<String>,
+    pub binary_args: Option<Vec<String>>,
+    pub binary_timeout_arg: Option<String>,
+    pub network_address: Option<String>,
+    pub socket_address: Option<String>
 }
 
 unsafe impl Send for EvalSvcCfg {}
 unsafe impl Send for LangCfg {}
-
-impl LangCfg {
-    fn args(&self, with_timeout: bool) -> Vec<String> {
-        if let (&Some(ref opt), &Some(timeout)) = (&self.timeout_opt, &self.timeout) {
-            self.binary_args.iter().filter_map(|x| {
-                match x as &str {
-                    "{TIMEOUT}" if with_timeout => Some(format!("{}{}", opt, timeout)),
-                    "{TIMEOUT}" if !with_timeout => None,
-                    _ => Some(x.to_owned())
-                }
-            }).collect::<Vec<String>>()
-        } else {
-            self.binary_args.clone()
-        }
-    }
-}
 
 pub enum Response {
     NoSuchLanguage,
@@ -64,12 +48,12 @@ pub enum Response {
 #[derive(Clone)]
 pub struct EvalSvc {
     queue: Arc<MsQueue<Message>>,
-    languages: Arc<HashMap<String, Arc<eval::Lang>>>,
+    languages: Arc<HashMap<String, (Arc<eval::Lang>, LangCfg)>>,
     threads: usize
 }
 
 enum Message {
-    Request(Arc<eval::Lang>, String, CallbackFnBox, bool, Option<String>),
+    Request(Arc<eval::Lang>, String, CallbackFnBox, Option<usize>, Option<String>),
     Terminate
 }
 
@@ -77,18 +61,10 @@ impl EvalSvc {
     pub fn new(cfg: EvalSvcCfg) -> Self {
         let timeout = cfg.timeout;
         let langs = cfg.languages
-                       .into_iter()
-                       .map(|x| {
-                            LangCfg {
-                                timeout: Some(if let Some(t) = x.timeout { t } else { timeout }),
-                                ..x
-                            }
-                       })
-                       .map(|x| {
-                           (x.name.clone(),
-                            eval::new(x))
-                       })
-                       .collect::<HashMap<_, _>>();
+            .into_iter()
+            .map(|cfg| LangCfg { timeout: Some(cfg.timeout.unwrap_or(timeout)), ..cfg })
+            .map(|cfg| (cfg.name.clone(), (eval::new(&cfg), cfg)))
+            .collect::<HashMap<_, _>>();
         let ret = EvalSvc {
             queue: Arc::new(MsQueue::new()),
             threads: cfg.eval_threads,
@@ -106,19 +82,18 @@ impl EvalSvc {
         with_timeout: bool,
         context_key: Option<String>,
         callback: CallbackFnBox) {
-        if let Some(lang) = self.languages.get(lang) {
-            self.send_message(Message::Request(lang.clone(), code, callback, with_timeout, context_key));
+        if let Some(&(ref lang, ref cfg)) = self.languages.get(lang) {
+            self.send_message(Message::Request(lang.clone(),
+                                               wrap_code(&code, cfg),
+                                               callback,
+                                               if with_timeout {
+                                                   Some(cfg.timeout.unwrap())
+                                               } else {
+                                                   None
+                                               },
+                                               context_key));
         } else {
             callback(Response::NoSuchLanguage);
-        }
-    }
-
-    pub fn restart(&self, lang: &str) -> Result<(), ()> {
-        if let Some(lang) = self.languages.get(lang) {
-            lang.restart();
-            Ok(())
-        } else {
-            Err(())
         }
     }
 
@@ -155,4 +130,20 @@ fn worker(queue: Arc<MsQueue<Message>>) {
             }
         };
     }
+}
+
+fn wrap_code(raw: &str, cfg: &LangCfg) -> String {
+    let mut code = String::with_capacity(raw.len());
+
+    if let Some(ref prefix) = cfg.code_before {
+        code.push_str(prefix);
+    }
+
+    code.push_str(raw);
+
+    if let Some(ref postfix) = cfg.code_after {
+        code.push_str(postfix);
+    }
+
+    code
 }

@@ -5,6 +5,7 @@ extern crate irc as irclib;
 extern crate evalbotlib as backend;
 extern crate rustc_serialize;
 
+use std::process;
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc;
@@ -92,6 +93,7 @@ fn main() {
                      format!("{}", k));
     }
     util::ignore(qrx.recv());
+    process::exit(0);
 }
 
 fn start_evalsvc() -> Result<EvalSvc, ()> {
@@ -149,9 +151,6 @@ enum MessageData {
     },
     Quit,
     Rehash,
-    Restart {
-        lang: String
-    },
     Raw {
         msg: String
     },
@@ -185,7 +184,7 @@ fn parse_msg(conn_hash: &str, message: &ircp::Message, owners: &[String], cmd_pr
             }
         };
 
-        if let Some(x) = try_cmd(&message, cmd_prefix, is_owner) {
+        if let Some(x) = try_cmd(message, cmd_prefix, is_owner) {
             return Some(IrcMessage { sender: sender, data: x });
         }
 
@@ -216,7 +215,6 @@ fn try_cmd(msg: &str, cmd_prefix: &str, owner: bool) -> Option<MessageData> {
         match &cmd as &str {
             "quit" if owner => Some(MessageData::Quit),
             "rehash" if owner => Some(MessageData::Rehash),
-            "restart" if owner && !args.is_empty() => Some(MessageData::Restart { lang: args[0].to_owned() }),
             "raw" if owner && !args.is_empty() => {
                 Some(MessageData::Raw {
                     msg: {
@@ -272,7 +270,6 @@ fn worker(conn: ircp::IrcServer,
                 match msg.data {
                     MessageData::EvalReq { .. } |
                     MessageData::Rehash |
-                    MessageData::Restart { .. } |
                     MessageData::Multiline { .. } |
                     MessageData::CancelMultiline { .. } => {
                         let conn = conn.clone();
@@ -290,6 +287,7 @@ fn worker(conn: ircp::IrcServer,
                         };
                     }
                     MessageData::Quit => {
+                        util::ignore(conn.send_quit("Quitting."));
                         util::ignore(quit_handle.send(()));
                         break 'connection;
                     }
@@ -332,12 +330,6 @@ fn eval_worker(mut svc: EvalSvc, rx: EvalWorkerReceiver, ocfg: OutputCfg) {
                     svc = nsvc;
                 } else {
                     reply!("read config failed; check logs");
-                }
-            }
-            MessageData::Restart { lang } => {
-                match svc.restart(&lang) {
-                    Ok(_) => reply!(&format!("restarted {}", lang)),
-                    Err(_) => reply!(&format!("no such language {}", lang)),
                 }
             }
             MessageData::Multiline { lang, mut code } => {

@@ -3,6 +3,9 @@ name = "evalbot"
 version = "0.2.2"
 authors = ["angelsl <hidingfromhidden@gmail.com>"]
 
+[features]
+unixsocket = ["evalbotlib/unixsocket"]
+
 [dependencies]
 evalbotlib = { path = "../evalbotlib" }
 irc = ">= 0.10.1"

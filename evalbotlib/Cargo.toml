@@ -3,10 +3,12 @@ name = "evalbotlib"
 version = "0.2.0"
 authors = ["angelsl <hidingfromhidden@gmail.com>"]
 
+[features]
+unixsocket = []
+
 [dependencies]
 toml = ">= 0.1.23"
 rustc-serialize = ">= 0.3.16"
 byteorder = ">= 0.4.2"
 clippy = ">= 0.0.24"
 crossbeam = ">= 0.2.1"
-zombie = ">= 0.0.4"

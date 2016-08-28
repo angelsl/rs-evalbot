@@ -1,10 +1,9 @@
 extern crate toml;
 
-use std::str::pattern::{Pattern, SearchStep, Searcher};
-use std::io::prelude::*;
-use std::fs::File;
-
 use rustc_serialize::Decodable;
+use std::fs::File;
+use std::io::prelude::*;
+use std::str::pattern::{Pattern, SearchStep, Searcher};
 
 pub fn decode<T>(name: &str) -> Result<T, String>
     where T: Decodable {
@@ -63,7 +62,11 @@ unsafe impl<'a> Searcher<'a> for LengthSearcher<'a> {
             SearchStep::Match(self.split_bef[self.current_split - 1], self.split_bef[self.current_split - 1])
         } else {
             self.is_match = !self.is_match;
-            SearchStep::Reject(if self.current_split == 0 { 0 } else { self.split_bef[self.current_split - 1] },
+            SearchStep::Reject(if self.current_split == 0 {
+                                   0
+                               } else {
+                                   self.split_bef[self.current_split - 1]
+                               },
                                self.split_bef[self.current_split])
         }
     }
