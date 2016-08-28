@@ -7,6 +7,7 @@
 //
 // Dual licensed under the terms of the MIT X11 or GNU GPL
 //
+// Copyright 2016 angelsl
 // Copyright 2001, 2002, 2003 Ximian, Inc (http://www.ximian.com)
 // Copyright 2004, 2005, 2006, 2007, 2008 Novell, Inc
 // Copyright 2011-2013 Xamarin Inc
@@ -31,56 +32,56 @@ using System.Net.Sockets;
 using System.Collections.Generic;
 
 using Mono.CSharp;
+using Mono.Unix;
+using Mono.Unix.Native;
 
 namespace CSEval {
-
     public class Driver {
-        private static readonly StringWriter sw = new StringWriter();
+        static void Main(string[] args) {
+            CompilerSettings settings = new CompilerSettings() { Unsafe = true };
+            ConsoleReportPrinter printer = new ConsoleReportPrinter();
 
-        public static StringWriter Output => sw;
+            CSharpShell shell = new CSharpShell(() => new Evaluator(new CompilerContext(settings, printer)) {
+                InteractiveBaseClass = typeof(InteractiveBase),
+                DescribeTypeExpressions = true,
+                WaitOnTask = true
+            });
 
-        static int Main(string[] args) {
-            var cmd = new CommandLineParser(Console.Error);
+            try {
+                Syscall.unlink(args[0]);
+            } catch {}
+            UnixListener sock = new UnixListener(args[0]);
+            sock.Start();
+            Syscall.chmod(args[0], FilePermissions.ACCESSPERMS);
 
-            // Enable unsafe code by default
-            var settings = new CompilerSettings() {
-                Unsafe = true,
-            };
-
-            if (!cmd.ParseArguments(settings, args))
-                return 1;
-
-            Console.SetOut(Output);
-            Console.SetError(Output);
-            Console.SetIn(new StringReader(""));
-
-            ReportPrinter printer = new ConsoleReportPrinter();
-
-            Func<Evaluator> newEval = () => {
-                Evaluator eval = new Evaluator(new CompilerContext(settings, printer)) {
-                    InteractiveBaseClass = typeof(InteractiveBase),
-                    DescribeTypeExpressions = true,
-                    WaitOnTask = true
-                };
-                return eval;
-            };
-
-            CSharpShell shell = new CSharpShell(newEval, Console.OpenStandardInput(), Console.OpenStandardOutput());
-            return shell.Run();
+            while (true) {
+                NetworkStream s = new NetworkStream(sock.AcceptSocket(), true);
+                Task.Run(() => {
+                    try {
+                        shell.ProcessConnection(s);
+                    } finally {
+                        s.Dispose();
+                    }
+                });
+            }
         }
     }
 
     public class CSharpShell {
+        private static readonly StringWriter StdOut = new StringWriter();
+
         private readonly Func<Evaluator> newEval;
         private readonly Dictionary<string, Evaluator> evaluators;
-        private readonly Stream input;
-        private readonly Stream output;
+        private readonly Dictionary<string, string> exprs;
 
-        public CSharpShell(Func<Evaluator> newEval, Stream input, Stream output) {
+        public CSharpShell(Func<Evaluator> newEval) {
+            Console.SetOut(StdOut);
+            Console.SetError(StdOut);
+            Console.SetIn(new StringReader(""));
+
             this.newEval = newEval;
-            this.input = input;
-            this.output = output;
             this.evaluators = new Dictionary<String, Evaluator>();
+            this.exprs = new Dictionary<string, string>();
         }
 
         private Evaluator GetEvaluator(string key) {
@@ -95,25 +96,24 @@ namespace CSEval {
             }
         }
 
-        private void ReturnWork(string result) {
-            output.WriteLengthUTF8(result);
-            output.Flush();
+        private void ReturnWork(string result, Stream conn) {
+            conn.WriteLengthUTF8(result);
+            conn.Flush();
         }
 
-        public int Run() {
-            Dictionary<string, string> exprs = new Dictionary<string, string>();
-            while (true) {
-                int timeout = input.ReadInt32();
-                int keylen = input.ReadInt32();
-                int codelen = input.ReadInt32();
-                string key = input.ReadUTF8(keylen);
-                string work = input.ReadUTF8(codelen).Trim();
+        public void ProcessConnection(Stream conn) {
+            int timeout = conn.ReadInt32();
+            int keylen = conn.ReadInt32();
+            int codelen = conn.ReadInt32();
+            string key = conn.ReadUTF8(keylen);
+            string work = conn.ReadUTF8(codelen).Trim();
 
-                if (work == "") {
-                    ReturnWork("");
-                    continue;
-                }
+            if (work == "") {
+                ReturnWork("", conn);
+                return;
+            }
 
+            lock (exprs) {
                 string output = null;
                 string evopt =
                     Evaluate(key,
@@ -121,13 +121,14 @@ namespace CSEval {
                         timeout, ref output);
 
                 if (output != null || evopt == null) { // exception or result
-                    ReturnWork(output ?? "");
+                    ReturnWork(output ?? "", conn);
                 } else if (output == null && evopt != null) { // continuation
-                    ReturnWork("(continue...)");
+                    ReturnWork("(continue...)", conn);
                 }
 
                 exprs[key] = evopt;
             }
+
         }
 
         private Tuple<string, bool, object> EvaluateHelper(Evaluator ev, string input, CancellationToken canceller) {
@@ -144,7 +145,7 @@ namespace CSEval {
             bool result_set;
             object result;
 
-            Driver.Output.GetStringBuilder().Clear();
+            StdOut.GetStringBuilder().Clear();
 
             CancellationTokenSource canceller = new CancellationTokenSource();
 
@@ -158,7 +159,7 @@ namespace CSEval {
                         result_set = resultTuple.Item2;
                         result = resultTuple.Item3;
                         if (result_set) {
-                            PrettyPrinter.PrettyPrint(Driver.Output, result);
+                            PrettyPrinter.PrettyPrint(StdOut, result);
                         }
                     } else {
                         output = "(timed out... probably?)";
@@ -169,12 +170,12 @@ namespace CSEval {
                     return null;
                 }
             } catch (Exception e) {
-                Driver.Output.WriteLine(e.ToString());
-                output = Driver.Output.ToString();
+                StdOut.WriteLine(e.ToString());
+                output = StdOut.ToString();
                 return null;
             }
-            if (Driver.Output.GetStringBuilder().Length > 0) {
-                output = Driver.Output.ToString();
+            if (StdOut.GetStringBuilder().Length > 0) {
+                output = StdOut.ToString();
             }
             return input;
         }

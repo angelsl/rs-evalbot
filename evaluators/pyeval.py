@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-import io, sys, struct, os, traceback
+import io, sys, struct, os, traceback, socketserver, socket
 from multiprocessing import Process, Pipe
 from code import InteractiveInterpreter
 
 class PyEval(InteractiveInterpreter):
     def __init__(self, locals=None):
         InteractiveInterpreter.__init__(self, locals)
-
-class EmptyIO(io.RawIOBase):
-    def __init__(self):
-        io.RawIOBase(self)
-
-    def readinto(x):
-        return 0
-
-    def write(x):
-        return 0
 
 class Request:
     def __init__(self, etor, source):
@@ -31,11 +21,16 @@ def readinput(inbuf):
     return (timeout, key, code)
 
 def writeoutput(outbuf, opt):
-    out = opt.encode('utf-8')
-    outlen = struct.pack('I', len(out))
-    outbuf.write(outlen)
-    outbuf.write(out)
-    outbuf.flush()
+    try:
+        out = opt.encode('utf-8')
+        outlen = struct.pack('I', len(out))
+        outbuf.write(outlen)
+        outbuf.write(out)
+        outbuf.flush()
+    except:
+        print("error returning output:")
+        traceback.print_exc(file=sys.stderr)
+
 
 def worker(pipe):
     etors = {}
@@ -57,57 +52,77 @@ def worker(pipe):
         finally:
             pipe.send((result, out.getvalue()))
 
+class PyEvalServer(socketserver.UnixStreamServer):
+    def server_bind(self):
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            os.unlink(self.server_address)
+        except OSError:
+            if os.path.exists(self.server_address):
+              raise
+
+        socketserver.UnixStreamServer.server_bind(self)
+        os.chmod(self.server_address, 0o777)
+        return
+
+class RequestHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        try:
+            self.handle_int()
+        finally:
+            self.request.shutdown()
+            self.request.close()
+
+    def handle_int(self):
+        global pipe, childpipe, codebufs, thread
+
+        if thread is None or not thread.is_alive():
+            thread = Process(target=worker, args=(childpipe,), daemon=True)
+            thread.start()
+
+        timeout, key, codefragment = readinput(self.rfile)
+        codebuf = codebufs.setdefault(key, [])
+        codebuf.append(codefragment)
+        source = '\n'.join(codebuf)
+
+        pipe.send((source, key))
+        if not pipe.poll(timeout / 1000):
+            # no result after timeout seconds
+            thread.terminate()
+            codebuf.clear()
+            writeoutput(self.wfile, "(timed out)")
+            return
+
+        try:
+            # pipe may be closed even though poll() returns True
+            more, result = pipe.recv()
+        except EOFError:
+            codebuf.clear()
+            writeoutput(self.wfile, "(worker process died)")
+            return
+        except:
+            codebuf.clear()
+            writeoutput(self.wfile, "(unexpected exception)")
+            traceback.print_exc(file=sys.stderr)
+            return
+
+        if not more:
+            codebuf.clear()
+            writeoutput(self.wfile, result)
+        elif more:
+            writeoutput(self.wfile, "(continue...)")
+        else:
+            codebuf.clear()
+            writeoutput(self.wfile, "something weird happened")
+
+codebufs = {}
+pipe, childpipe = Pipe()
+thread = None
+
 def main():
-    inbuf = os.fdopen(0, mode='rb')
-    outbuf = os.fdopen(1, mode='wb')
-    stderr = os.fdopen(2, mode='wb')
-
-    # make it harder to hijack stdin/out
-    dummy = EmptyIO()
-    sys.stdout = dummy
-    sys.__stdout__ = dummy
-    sys.stderr = dummy
-    sys.__stderr__ = dummy
-    sys.stdin = dummy
-    sys.__stdin__ = dummy
-
-    while True:
-        codebufs = {}
-        pipe, childpipe = Pipe()
-        thread = Process(target=worker, args=(childpipe,), daemon=True)
-        thread.start()
-        while True:
-            timeout, key, inp = readinput(inbuf)
-            codebuf = codebufs.setdefault(key, [])
-            codebuf.append(inp)
-            source = '\n'.join(codebuf)
-
-            pipe.send((source, key))
-            if not pipe.poll(timeout / 1000):
-                # there is no result after timeout seconds
-                thread.terminate()
-                writeoutput(outbuf, "(timed out)")
-                break
-
-            try:
-                # poll = True may mean the pipe is closed
-                more, result = pipe.recv()
-            except EOFError:
-                # yup, the pipe was closed.
-                writeoutput(outbuf, "(worker process died)")
-                break
-            except:
-                writeoutput(outbuf, "(exception @ python main)")
-                traceback.print_exc(file=stderr)
-                break
-
-            if not more:
-                codebuf.clear()
-                writeoutput(outbuf, result)
-            elif more:
-                writeoutput(outbuf, "(continue...)")
-            else:
-                writeoutput(outbuf, "something weird happened")
+    server = PyEvalServer(sys.argv[1], RequestHandler)
+    server.serve_forever()
 
 if __name__ == "__main__":
     main()

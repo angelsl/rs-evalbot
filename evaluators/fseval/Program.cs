@@ -1,24 +1,43 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.FSharp.Compiler.Interactive;
 using Microsoft.FSharp.Core;
 
+using Mono.Unix;
+using Mono.Unix.Native;
+
 namespace FSEval {
     public static class Program {
         private static readonly StringReader DummyInput = new StringReader("");
-        private static readonly Stream Input = Console.OpenStandardInput();
-        private static readonly Stream Output = Console.OpenStandardOutput();
         private static readonly StringWriter EvalOutput = new StringWriter();
         private static readonly Dictionary<string, Shell.FsiEvaluationSession> _evaluators = new Dictionary<string, Shell.FsiEvaluationSession>();
         private static void Main(string[] args) {
             Console.SetOut(EvalOutput);
             Console.SetError(EvalOutput);
             Console.SetIn(DummyInput);
-            Run();
+
+            try {
+                Syscall.unlink(args[0]);
+            } catch {}
+            UnixListener sock = new UnixListener(args[0]);
+            sock.Start();
+            Syscall.chmod(args[0], FilePermissions.ACCESSPERMS);
+
+            while (true) {
+                NetworkStream s = new NetworkStream(sock.AcceptSocket(), true);
+                Task.Run(() => {
+                    try {
+                        ProcessConnection(s);
+                    } finally {
+                        s.Dispose();
+                    }
+                });
+            }
         }
 
         private static Shell.FsiEvaluationSession GetEvaluator(string key) {
@@ -34,26 +53,24 @@ namespace FSEval {
             }
         }
 
-        private static void ReturnWork(string result) {
-            Output.WriteLengthUTF8(result);
-            Output.Flush();
+        private static void ReturnWork(string result, Stream conn) {
+            conn.WriteLengthUTF8(result);
+            conn.Flush();
         }
 
-        private static void Run() {
-            while (true) {
-                int timeout = Input.ReadInt32();
-                int keylen = Input.ReadInt32();
-                int codelen = Input.ReadInt32();
-                string key = Input.ReadUTF8(keylen);
-                string work = Input.ReadUTF8(codelen).Trim();
+        private static void ProcessConnection(Stream conn) {
+            int timeout = conn.ReadInt32();
+            int keylen = conn.ReadInt32();
+            int codelen = conn.ReadInt32();
+            string key = conn.ReadUTF8(keylen);
+            string work = conn.ReadUTF8(codelen).Trim();
 
-                if (work == "") {
-                    ReturnWork("");
-                    continue;
-                }
-
-                ReturnWork(Evaluate(key, work, timeout) ?? "");
+            if (work == "") {
+                ReturnWork("", conn);
+                return;
             }
+
+            ReturnWork(Evaluate(key, work, timeout) ?? "", conn);
         }
 
         private static void EvaluateHelper(Shell.FsiEvaluationSession ev, string input, CancellationToken canceller) {
