@@ -45,7 +45,9 @@ if (cluster.isMaster) {
             }
         });
     });
-    fs.unlinkSync(process.argv[2]);
+    try {
+        fs.unlinkSync(process.argv[2]);
+    } catch (_) {}
     server.listen(process.argv[2], () => {
         fs.chmodSync(process.argv[2], 0777);
     });
