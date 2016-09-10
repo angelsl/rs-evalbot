@@ -19,9 +19,12 @@ pub fn new(cfg: &::LangCfg) -> Arc<Lang> {
     } else if cfg.network_address.is_some() {
         Arc::new(remote::network::NetworkLang::new(cfg.network_address.as_ref().unwrap().to_owned()))
     } else if cfg.socket_address.is_some() {
+        #[cfg(not(feature = "unixsocket"))]
+        panic!("Unix socket functionality not enabled");
+        #[cfg(feature = "unixsocket")]
         Arc::new(remote::unixsocket::UnixSocketLang::new(cfg.socket_address.as_ref().unwrap().to_owned()))
     } else {
-        panic!("No valid run configuration found")
+        panic!("No valid run configuration found");
     }
 }
 
