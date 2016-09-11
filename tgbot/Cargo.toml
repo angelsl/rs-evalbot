@@ -1,0 +1,14 @@
+[package]
+name = "tgbot"
+version = "0.1.0"
+authors = ["angelsl <hidingfromhidden@gmail.com>"]
+
+[features]
+unixsocket = ["evalbotlib/unixsocket"]
+
+[dependencies]
+evalbotlib = { path = "../evalbotlib" }
+clippy = ">= 0.0.90"
+rustc-serialize = ">= 0.3.16"
+hyper = ">= 0.9.10"
+mime = ">= 0.0.0"
