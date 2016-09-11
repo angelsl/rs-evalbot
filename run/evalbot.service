@@ -1,0 +1,16 @@
+[Unit]
+Description=evalbot
+After=network-online.target pyeval.service jseval.service fseval.service cseval.service
+Wants=network-online.target pyeval.service jseval.service fseval.service cseval.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/home/eval/evalbot/evalbot
+WorkingDirectory=/home/eval/evalbot
+User=eval
+Group=eval
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

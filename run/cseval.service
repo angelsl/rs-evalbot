@@ -1,0 +1,14 @@
+[Unit]
+Description=cseval
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=mono_syscalls -- /usr/bin/mono /usr/local/lib/evalbot/cseval.exe /run/eval/cseval.sock
+WorkingDirectory=/home/eval/evalbot
+User=root
+Group=root
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

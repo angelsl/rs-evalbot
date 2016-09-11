@@ -1,0 +1,8 @@
+# bot owners, can use /lang# to disable timeout
+owners = ["angelsl"]
+
+# telegram bot id
+bot_id = "xyz"
+
+# language aliases, because /c++ is not a valid Telegram command
+lang_subst = { "cpp" = "c++", "gpp" = "g++" }

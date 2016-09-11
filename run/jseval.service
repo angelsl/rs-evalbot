@@ -1,0 +1,14 @@
+[Unit]
+Description=jseval
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=node_syscalls -- /usr/bin/node /usr/local/lib/evalbot/jseval.js /run/eval/jseval.sock
+WorkingDirectory=/home/eval/evalbot
+User=root
+Group=root
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

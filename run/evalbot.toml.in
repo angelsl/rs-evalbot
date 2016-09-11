@@ -7,7 +7,7 @@ eval_threads = 4
 # name>
 name = "rs"
 # path to binary
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 # arguments to binary
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
@@ -47,7 +47,7 @@ code_after = '''
 
 [[languages]]
 name = "rs!"
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "--", "/usr/bin/dash",
@@ -60,7 +60,7 @@ binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "gcc"
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "{TIMEOUT}",
@@ -74,7 +74,7 @@ binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "c"
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "{TIMEOUT}",
@@ -88,7 +88,7 @@ binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "g++"
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "{TIMEOUT}",
@@ -102,7 +102,7 @@ binary_timeout_arg = "--timeout="
 
 [[languages]]
 name = "c++"
-binary_path = "/usr/local/lib/evalbot/playpen"
+binary_path = "/home/eval/playpen"
 binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
     "--syscalls-file=rust_syscalls",
     "{TIMEOUT}",
@@ -132,7 +132,7 @@ socket_address = "/run/eval/jseval.sock"
 
 #[[languages]]
 #name = "sc"
-#binary_path = "/usr/local/lib/evalbot/playpen"
+#binary_path = "/home/eval/playpen"
 #binary_args = ["/opt/sandbox", "--mount-proc", "--user=eval", "--devices=/dev/urandom:r,/dev/null:rw", "--memory-limit=128",
 #   "--syscalls-file=scala_syscalls",
 #   "--", "/usr/lib/jvm/default-runtime/bin/java",

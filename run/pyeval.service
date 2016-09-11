@@ -1,0 +1,14 @@
+[Unit]
+Description=pyeval
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=python_syscalls -- /usr/bin/python /usr/local/lib/evalbot/pyeval.py /run/eval/pyeval.sock
+WorkingDirectory=/home/eval/evalbot
+User=root
+Group=root
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
