@@ -38,6 +38,7 @@ using Mono.Unix.Native;
 namespace CSEval {
     public class Driver {
         static void Main(string[] args) {
+            CSharpShell.InitStdOut();
             CompilerSettings settings = new CompilerSettings() { Unsafe = true };
             ConsoleReportPrinter printer = new ConsoleReportPrinter();
 
@@ -74,10 +75,13 @@ namespace CSEval {
         private readonly Dictionary<string, Evaluator> evaluators;
         private readonly Dictionary<string, string> exprs;
 
-        public CSharpShell(Func<Evaluator> newEval) {
+        public static void InitStdOut() {
             Console.SetOut(StdOut);
             Console.SetError(StdOut);
             Console.SetIn(new StringReader(""));
+        }
+
+        public CSharpShell(Func<Evaluator> newEval) {
 
             this.newEval = newEval;
             this.evaluators = new Dictionary<String, Evaluator>();
