@@ -5,6 +5,7 @@ authors = ["angelsl <hidingfromhidden@gmail.com>"]
 
 [features]
 unixsocket = ["evalbotlib/unixsocket"]
+debugprint = []
 
 [dependencies]
 evalbotlib = { path = "../evalbotlib" }
