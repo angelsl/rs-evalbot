@@ -188,7 +188,6 @@ fn parse_msg(conn_hash: &str, message: &ircp::Message, owners: &[String], cmd_pr
             return Some(IrcMessage { sender: sender, data: x });
         }
 
-        let message = message.trim();
         let tok: Vec<&str> = message.splitn(2, |c| c == '>' || c == '#' || c == '$').collect();
         if tok.len() < 2 {
             return None;
