@@ -1,10 +1,10 @@
-#![feature(plugin, pattern, fnbox, question_mark, stmt_expr_attributes)]
-#![plugin(clippy)]
+#![feature(pattern, fnbox, stmt_expr_attributes)]
 
 extern crate crossbeam;
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use] extern crate serde_derive;
 
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use std::boxed::FnBox;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,14 +15,14 @@ pub mod util;
 
 pub type CallbackFnBox = Box<FnBox(Response) + Send>;
 
-#[derive(Clone, RustcDecodable, Default, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 pub struct EvalSvcCfg {
     pub timeout: usize,
     pub eval_threads: usize,
     pub languages: Vec<LangCfg>
 }
 
-#[derive(Clone, RustcDecodable, Default, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 pub struct LangCfg {
     pub timeout: Option<usize>,
     pub timeout_opt: Option<String>,

@@ -7,8 +7,8 @@ authors = ["angelsl <hidingfromhidden@gmail.com>"]
 unixsocket = []
 
 [dependencies]
-toml = ">= 0.1.23"
-rustc-serialize = ">= 0.3.16"
-byteorder = ">= 0.4.2"
-clippy = ">= 0.0.24"
-crossbeam = ">= 0.2.1"
+toml = ">= 0.0.0"
+serde = ">= 0.0.0"
+serde_derive = ">= 0.0.0"
+byteorder = ">= 0.0.0"
+crossbeam = ">= 0.0.0"

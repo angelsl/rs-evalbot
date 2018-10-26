@@ -1,31 +1,4 @@
-extern crate toml;
-
-use rustc_serialize::{Encodable, Decodable};
-use std::fs::File;
-use std::io::prelude::*;
 use std::str::pattern::{Pattern, SearchStep, Searcher};
-
-pub fn encode<T>(obj: &T, name: &str) -> Result<(), String>
-    where T: Encodable {
-    let mut enc = toml::Encoder::new();
-    obj.encode(&mut enc).map_err(|x| format!("could not encode object: {}", x))?;
-    let toml = toml::Value::Table(enc.toml).to_string();
-
-    let mut f = File::create(name).map_err(|x| format!("could not open {}: {}", name, x))?;
-    f.write_all(toml.as_bytes()).map(|_| ()).map_err(|x| format!("could not write to {}: {}", name, x))
-}
-
-pub fn decode<T>(name: &str) -> Result<T, String>
-    where T: Decodable {
-    let mut f = try!(File::open(name).map_err(|x| format!("could not open {}: {}", name, x)));
-    let mut s = String::new();
-
-    try!(f.read_to_string(&mut s).map_err(|x| format!("could not read {}: {}", name, x)));
-
-    let value = try!(s.parse::<toml::Value>().map_err(|x| format!("could not parse {}: {:?}", name, x)));
-
-    T::decode(&mut toml::Decoder::new(value)).map_err(|x| format!("could not decode {}: {}", name, x))
-}
 
 pub fn ignore<T, U>(_: Result<T, U>) {}
 
