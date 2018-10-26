@@ -1,23 +1,19 @@
-#![feature(plugin, question_mark)]
-#![plugin(clippy)]
-
 extern crate evalbotlib as backend;
 extern crate hyper;
-#[macro_use]
-extern crate mime;
-extern crate rustc_serialize;
+extern crate serde;
+#[macro_use] extern crate serde_derive;
+extern crate serde_json;
+extern crate toml;
+extern crate futures;
 
 use backend::{EvalSvc, EvalSvcCfg, Response, util};
-
-use hyper::header::ContentType;
-use hyper::method::Method;
-use hyper::status::StatusCode;
-
-use rustc_serialize::json;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::RwLock;
+
+use hyper::{Body, Method, StatusCode, Server};
+use futures::{Future, Stream};
 
 macro_rules! ignore_req {
     () => {
@@ -36,7 +32,7 @@ macro_rules! d { ($x:expr) => {} }
 
 static WHITELIST_FILENAME: &'static str = "tgwhitelist.toml";
 
-#[derive(Clone, RustcDecodable, Default, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 struct TgCfg {
     owners: HashSet<String>,
     msg_owner_id: Option<i64>,
@@ -44,7 +40,7 @@ struct TgCfg {
     lang_subst: HashMap<String, String>
 }
 
-#[derive(Clone, RustcEncodable, RustcDecodable, Default, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 struct TgWhitelist {
     priv_enabled: bool,
     group_enabled: bool,
@@ -86,7 +82,7 @@ impl TgWhitelist {
             Ok(()) => (),
             Err(err) => println!("warn: failed to save whitelist: {}", err)
         };
-    }
+}
 }
 
 struct TgSvc {
@@ -163,11 +159,11 @@ impl TgSvc {
         macro_rules! ignore_req {
             () => { return Ok("".to_owned()); }
         }
-        let update = match json::decode::<tgapi::recv::Update>(req) {
+        let update = match serde_json::from_str::<tgapi::recv::Update>(req) {
             Ok(update) => update,
             Err(err) => {
                 println!("failed to parse update: {}\n{}", err, req);
-                return Err(StatusCode::BadRequest);
+                return Err(StatusCode::BAD_REQUEST);
             }
         };
 
@@ -214,7 +210,7 @@ impl TgSvc {
 
         tgapi::respond_leave_group(message_obj.chat.id).map_err(|err| {
             println!("Error calling respond_leave_group: {}", err);
-            StatusCode::InternalServerError
+            StatusCode::INTERNAL_SERVER_ERROR
         })
     }
 
@@ -327,7 +323,7 @@ impl TgSvc {
 
         tgapi::respond_send_msg(message_obj.chat.id, resp, None, Some(message_obj.message_id)).map_err(|err| {
             println!("Error calling respond_send_msg: {}", err);
-            StatusCode::InternalServerError
+            StatusCode::INTERNAL_SERVER_ERROR
         })
     }
 
@@ -338,7 +334,7 @@ impl TgSvc {
                 || (message_obj.chat.chat_type == "private" && !wl.priv_ok(message_obj.chat.id)) {
                 return tgapi::respond_send_msg(message_obj.chat.id, format!("You or this group is not on the whitelist. Seek help. ID: {}", message_obj.chat.id), None, None).map_err(|err| {
                     println!("Error calling respond_send_msg: {}", err);
-                    StatusCode::InternalServerError
+                    StatusCode::INTERNAL_SERVER_ERROR
                 });
             }
         } else {
@@ -414,8 +410,6 @@ fn respond(resp: Response, bot_id: String, chat_id: i64, orig_msg_id: i64, is_pr
 }
 
 fn main() {
-    use hyper::server as hsv;
-
     let tgsvc = match TgSvc::init() {
         Ok(svc) => svc,
         Err(()) => {
@@ -424,55 +418,41 @@ fn main() {
         }
     };
 
-    let server = match hsv::Server::http("127.0.0.101:18117") {
-        Ok(svr) => svr,
-        Err(err) => {
-            println!("Server::http failed: {}", err);
-            return;
-        }
-    };
+    let server = Server::bind(&([127, 0, 0, 1], 3000).into())
+        .serve(|| hyper::service::service_fn(|req: hyper::Request<Body>| {
+            match req.method() {
+                &Method::POST => futures::future::Either::A(req.into_body().concat2().then(|chunk| {
+                    match chunk {
+                        Ok(chunk) => match std::str::from_utf8(&chunk) {
+                            Ok(req) => {
+                                d!(println!("received req:\n{}", req));
 
-    match server.handle(move |mut req: hsv::Request, mut res: hsv::Response| {
-        match req.method {
-            Method::Post => {
-                let mut buf = String::new();
-                match req.read_to_string(&mut buf) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        println!("Request::read_to_end failed: {}", err);
-                        *res.status_mut() = StatusCode::InternalServerError;
+                                match tgsvc.handle(req) {
+                                    Ok(resp) => hyper::Response::builder()
+                                        .header(hyper::header::CONTENT_TYPE, "application/json; charset=utf-8")
+                                        .body(Body::from(resp)),
+                                    Err(status) => hyper::Response::builder()
+                                        .status(status)
+                                        .body(Body::empty())
+                                }
+                            }
+                            Err(e) => hyper::Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(Body::empty())
+                        }
+                        Err(e) => hyper::Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::empty())
                     }
-                };
-
-                let buf = buf;
-                d!(println!("received req:\n{}", buf));
-                let resp = match tgsvc.handle(&buf) {
-                    Ok(resp) => resp,
-                    Err(status) => {
-                        *res.status_mut() = status;
-                        return;
-                    }
-                };
-
-                res.headers_mut().set(ContentType(mime!(Application/Json; Charset=Utf8)));
-                d!(println!("resp:\n{}", resp));
-                match res.send(resp.as_bytes()) {
-                    Ok(_) => (),
-                    Err(err) => {
-                        println!("Response::send failed: {}", err);
-                        return;
-                    }
-                };
+                })),
+                _ => futures::future::Either::B(futures::future::result(hyper::Response::builder()
+                        .status(StatusCode::METHOD_NOT_ALLOWED)
+                        .body(Body::empty())))
             }
-            _ => *res.status_mut() = StatusCode::MethodNotAllowed,
-        };
-    }) {
-        Ok(_) => (),
-        Err(err) => {
-            println!("Server::handle failed: {}", err);
-            return;
-        }
-    };
+        }))
+        .map_err(|e| println!("Hyper error: {}", e));
+
+    hyper::rt::run(server);
 }
 
 mod tgapi;

@@ -9,7 +9,10 @@ debugprint = []
 
 [dependencies]
 evalbotlib = { path = "../evalbotlib" }
-clippy = ">= 0.0.90"
-rustc-serialize = ">= 0.3.16"
-hyper = ">= 0.9.10"
-mime = ">= 0.0.0"
+hyper = ">= 0.0.0"
+hyper-tls = ">= 0.0.0"
+serde = ">= 0.0.0"
+serde_json = ">= 0.0.0"
+serde_derive = ">= 0.0.0"
+toml = ">= 0.0.0"
+futures = ">= 0.0.0"
