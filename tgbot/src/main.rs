@@ -1,16 +1,17 @@
 extern crate evalbotlib as backend;
 extern crate hyper;
+extern crate hyper_tls;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate serde_json;
 extern crate toml;
 extern crate futures;
+extern crate string as estring;
 
 use backend::{EvalSvc, EvalSvcCfg, Response, util};
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use hyper::{Body, Method, StatusCode, Server};
 use futures::{Future, Stream};
@@ -126,7 +127,7 @@ impl TgSvc {
         };
 
         Ok(TgSvc {
-            config: config,
+            config,
             service: EvalSvc::new(match util::decode::<EvalSvcCfg>("evalbot.toml") {
                 Ok(x) => x,
                 Err(x) => {
@@ -225,7 +226,7 @@ impl TgSvc {
         if owner && dollar_cmd && message_obj.chat.chat_type == "private" {
             self.handle_owner_command(message_obj)
         } else if slash_cmd {
-            self.handle_eval(message_obj)
+            self.handle_eval(&message_obj)
         } else {
             ignore_req!();
         }
@@ -236,7 +237,7 @@ impl TgSvc {
         let message = message_obj.text.unwrap();
 
         let tok = message.trim().split_whitespace().collect::<Vec<_>>();
-        if tok.len() < 1 { // this can't happen actually..
+        if tok.is_empty() { // this can't happen actually..
             ignore_req!();
         }
 
@@ -327,11 +328,11 @@ impl TgSvc {
         })
     }
 
-    fn handle_eval(&self, message_obj: tgapi::recv::Message) -> Result<String, StatusCode> {
+    fn handle_eval(&self, message_obj: &tgapi::recv::Message) -> Result<String, StatusCode> {
         d!(println!("handle_eval"));
         if let Ok(wl) = self.whitelist.read() {
-            if (message_obj.chat.chat_type != "private" && !wl.group_ok(message_obj.chat.id))
-                || (message_obj.chat.chat_type == "private" && !wl.priv_ok(message_obj.chat.id)) {
+            if message_obj.chat.chat_type != "private" && !wl.group_ok(message_obj.chat.id)
+                || message_obj.chat.chat_type == "private" && !wl.priv_ok(message_obj.chat.id) {
                 return tgapi::respond_send_msg(message_obj.chat.id, format!("You or this group is not on the whitelist. Seek help. ID: {}", message_obj.chat.id), None, None).map_err(|err| {
                     println!("Error calling respond_send_msg: {}", err);
                     StatusCode::INTERNAL_SERVER_ERROR
@@ -375,14 +376,14 @@ impl TgSvc {
                           code.to_owned(),
                           timeout,
                           Some(format!("$tg{}", message_obj.chat.id)),
-                          Box::new(move |resp| respond(resp, bot_id, chat_id, orig_msg_id, is_priv)));
+                          Box::new(move |resp| respond(resp, &bot_id, chat_id, orig_msg_id, is_priv)));
 
         Ok(format!(r#"{{"method": "sendChatAction", "chat_id": {}, "action": "typing"}}"#, chat_id))
     }
 }
 
-fn respond(resp: Response, bot_id: String, chat_id: i64, orig_msg_id: i64, is_priv: bool) {
-    fn html_escape(src: String) -> String {
+fn respond(resp: Response, bot_id: &str, chat_id: i64, orig_msg_id: i64, is_priv: bool) {
+    fn html_escape(src: &str) -> String {
         src.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
     }
 
@@ -391,17 +392,17 @@ fn respond(resp: Response, bot_id: String, chat_id: i64, orig_msg_id: i64, is_pr
             if output.is_empty() {
                 "OK, no output.".to_owned()
             } else {
-                format!("<pre>{}</pre>", html_escape(output))
+                format!("<pre>{}</pre>", html_escape(&output))
             }
         }
         Response::Error(output) => {
-            format!("<strong>An Evalbot error occured.</strong>\n<pre>{}</pre>", html_escape(output))
+            format!("<strong>An Evalbot error occured.</strong>\n<pre>{}</pre>", html_escape(&output))
         }
         Response::NoSuchLanguage if is_priv => "No such language.".to_owned(),
         Response::NoSuchLanguage => return,
     };
 
-    match tgapi::send_message(&bot_id, chat_id, html, Some("HTML".to_owned()), Some(orig_msg_id)) {
+    match tgapi::send_message(bot_id, chat_id, html, Some("HTML".to_owned()), Some(orig_msg_id)) {
         Err(err) => {
             println!("error while sending response: {}", err);
         }
@@ -411,7 +412,7 @@ fn respond(resp: Response, bot_id: String, chat_id: i64, orig_msg_id: i64, is_pr
 
 fn main() {
     let tgsvc = match TgSvc::init() {
-        Ok(svc) => svc,
+        Ok(svc) => Arc::new(svc),
         Err(()) => {
             println!("TgSvc::init() failed");
             return;
@@ -419,37 +420,41 @@ fn main() {
     };
 
     let server = Server::bind(&([127, 0, 0, 1], 3000).into())
-        .serve(|| hyper::service::service_fn(|req: hyper::Request<Body>| {
-            match req.method() {
-                &Method::POST => futures::future::Either::A(req.into_body().concat2().then(|chunk| {
-                    match chunk {
-                        Ok(chunk) => match std::str::from_utf8(&chunk) {
-                            Ok(req) => {
-                                d!(println!("received req:\n{}", req));
+        .serve(move || {
+            let tgsvc = tgsvc.clone();
+            hyper::service::service_fn(move |req: hyper::Request<Body>| {
+                let tgsvc = tgsvc.clone();
+                match *req.method() {
+                    Method::POST => futures::future::Either::A(req.into_body().concat2().then(move |chunk| {
+                        match chunk {
+                            Ok(chunk) => match std::str::from_utf8(&chunk) {
+                                Ok(req) => {
+                                    d!(println!("received req:\n{}", req));
 
-                                match tgsvc.handle(req) {
-                                    Ok(resp) => hyper::Response::builder()
-                                        .header(hyper::header::CONTENT_TYPE, "application/json; charset=utf-8")
-                                        .body(Body::from(resp)),
-                                    Err(status) => hyper::Response::builder()
-                                        .status(status)
-                                        .body(Body::empty())
+                                    match tgsvc.handle(req) {
+                                        Ok(resp) => hyper::Response::builder()
+                                            .header(hyper::header::CONTENT_TYPE, "application/json; charset=utf-8")
+                                            .body(Body::from(resp)),
+                                        Err(status) => hyper::Response::builder()
+                                            .status(status)
+                                            .body(Body::empty())
+                                    }
                                 }
+                                Err(_) => hyper::Response::builder()
+                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                    .body(Body::empty())
                             }
-                            Err(e) => hyper::Response::builder()
+                            Err(_) => hyper::Response::builder()
                                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                                 .body(Body::empty())
                         }
-                        Err(e) => hyper::Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .body(Body::empty())
-                    }
-                })),
-                _ => futures::future::Either::B(futures::future::result(hyper::Response::builder()
-                        .status(StatusCode::METHOD_NOT_ALLOWED)
-                        .body(Body::empty())))
-            }
-        }))
+                    })),
+                    _ => futures::future::Either::B(futures::future::result(hyper::Response::builder()
+                            .status(StatusCode::METHOD_NOT_ALLOWED)
+                            .body(Body::empty())))
+                }
+            })
+        })
         .map_err(|e| println!("Hyper error: {}", e));
 
     hyper::rt::run(server);

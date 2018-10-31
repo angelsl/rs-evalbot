@@ -1,6 +1,9 @@
-use std::io::{Read, Write};
-
-use hyper::{Uri, Request, StatusCode, Method};
+use estring;
+use futures::Future;
+use futures::Stream;
+use hyper::{Body, Chunk, Client, Uri, Request, StatusCode};
+use hyper::client::HttpConnector;
+use hyper_tls::HttpsConnector;
 use serde::Serialize;
 
 pub mod recv {
@@ -67,16 +70,16 @@ pub mod send {
 
 pub fn respond_leave_group(chat_id: i64) -> Result<String, String> {
     serde_json::to_string(&send::LeaveGroup {
-        chat_id: chat_id,
+        chat_id,
         method: Some("leaveChat".to_owned())
     }).map_err(|err| format!("error encoding JSON: {}", err))
 }
 
 pub fn respond_send_msg(chat_id: i64, text: String, parse_mode: Option<String>, reply_to: Option<i64>) -> Result<String, String> {
     serde_json::to_string(&send::Message {
-        chat_id: chat_id,
-        text: text,
-        parse_mode: parse_mode,
+        chat_id,
+        text,
+        parse_mode,
         reply_to_message_id: reply_to,
         method: Some("sendMessage".to_owned())
     }).map_err(|err| format!("error encoding JSON: {}", err))
@@ -88,26 +91,26 @@ pub fn get_me(bot_id: &str) -> Result<recv::User, String> {
     if let (true, Some(user)) = (resp.ok, resp.result) {
         Ok(user)
     } else {
-        Err(resp.description.unwrap_or("No error message provided".to_owned()))
+        Err(resp.description.unwrap_or_else(|| "No error message provided".to_owned()))
     }
 }
 
 pub fn leave_group(bot_id: &str, chat_id: i64) -> Result<(), String> {
-    let res = post(&send::LeaveGroup { chat_id: chat_id, method: None }, bot_id, "leaveChat")?;
+    let res = post(&send::LeaveGroup { chat_id, method: None }, bot_id, "leaveChat")?;
     let resp: recv::Response<()> = serde_json::from_str(&res).map_err(|err| format!("error decoding JSON: {}", err))?;
     if resp.ok {
         Ok(())
     } else {
-        Err(resp.description.unwrap_or("No error message provided".to_owned()))
+        Err(resp.description.unwrap_or_else(|| "No error message provided".to_owned()))
     }
 }
 
 pub fn send_message(bot_id: &str, chat_id: i64, text: String, parse_mode: Option<String>, reply_to: Option<i64>) -> Result<(), String> {
     let msg = send::Message {
-        chat_id: chat_id,
+        chat_id,
         reply_to_message_id: reply_to,
-        parse_mode: parse_mode,
-        text: text,
+        parse_mode,
+        text,
         method: None
     };
 
@@ -117,48 +120,58 @@ pub fn send_message(bot_id: &str, chat_id: i64, text: String, parse_mode: Option
     if resp.ok {
         Ok(())
     } else {
-        Err(resp.description.unwrap_or("No error message provided".to_owned()))
+        Err(resp.description.unwrap_or_else(|| "No error message provided".to_owned()))
     }
 }
 
-pub fn get(bot_id: &str, method: &str) -> Result<String, String> {
+thread_local! {
+    static http_client: Client<HttpsConnector<HttpConnector>> = Client::builder().build::<_, Body>(
+        HttpsConnector::new(1).unwrap());
+}
+
+pub fn get(bot_id: &str, method: &str) -> Result<estring::String<Chunk>, String> {
     let url = format!("https://api.telegram.org/bot{}/{}", bot_id, method).parse::<Uri>()
         .map_err(|err| format!("error parsing URL: {}", err))?;
-    let req = Request::get().uri(url).body(()).map_err(|err| format!("error creating hyper request: {}", err))?;
-    let req = req.start().map_err(|err| format!("error starting hyper request: {}", err))?;
-
-    match req.send() {
-        Ok(mut resp) => {
-            let mut buf = String::new();
-            match (resp.read_to_string(&mut buf), resp.status) {
-                (Ok(_), StatusCode::OK) => Ok(buf),
-                (Ok(_), _) => Err(format!("Telegram returned status {}:\n{}", resp.status, buf)),
-                (Err(err), _) => Err(format!("Telegram returned status {} and error reading response:\n{}", resp.status, err))
+    let req = Request::get(url).body(Body::from(""))
+        .map_err(|err| format!("error creating hyper request: {}", err))?;
+    // FIXME need to re-write totally to use Tokio properly, instead of just wait()
+    http_client.with(|x| x.request(req)).wait()
+        .map_err(|e| format!("error GETing from Telegram: {}", e))
+        .and_then(|resp| {
+            let status = resp.status();
+            let resp: Result<estring::String<Chunk>, String> = resp.into_body().concat2().wait()
+                .map_err(|e| format!("error receiving response: {}", e))
+                .and_then(|c| estring::TryFrom::try_from(c)
+                    .map_err(|e| format!("error decoding response: {}", e)));
+            match (status, resp) {
+                (StatusCode::OK, Ok(resp)) => Ok(resp),
+                (_, Ok(resp)) => Err(format!("Telegram returned status {}:\n{}", status, &resp[..])),
+                (_, Err(e)) =>  Err(format!("Telegram returned status {} and error resding response:\n{}", status, e))
             }
-        }
-        Err(err) => Err(format!("error GETing from Telegram: {}", err))
-    }
+        })
 }
 
-pub fn post<T: Serialize>(msg: &T, bot_id: &str, method: &str) -> Result<String, String> {
+pub fn post<T: Serialize>(msg: &T, bot_id: &str, method: &str) -> Result<estring::String<Chunk>, String> {
     let url = format!("https://api.telegram.org/bot{}/{}", bot_id, method).parse::<Uri>()
         .map_err(|err| format!("error parsing URL: {}", err))?;
     let json = serde_json::to_string(msg).map_err(|err| format!("error encoding JSON: {}", err))?;
-    let mut req = Request::new(Method::POST, url).map_err(|err| format!("error creating hyper request: {}", err))?;
-    // req.headers_mut().set(ContentType(mime!(Application/Json; Charset=Utf8)));
-    let mut req = req.start().map_err(|err| format!("error starting hyper request: {}", err))?;
-
-    req.write_all(json.as_bytes()).map_err(|err| format!("error writing JSON to server: {}", err))?;
-
-    match req.send() {
-        Ok(mut resp) => {
-            let mut buf = String::new();
-            match (resp.read_to_string(&mut buf), resp.status) {
-                (Ok(_), StatusCode::OK) => Ok(buf),
-                (Ok(_), _) => Err(format!("Telegram returned status {}:\n{}", resp.status, buf)),
-                (Err(err), _) => Err(format!("Telegram returned status {} and error reading response:\n{}", resp.status, err))
+    let req = Request::post(url)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(json.into())
+        .map_err(|err| format!("error creating hyper request: {}", err))?;
+    http_client.with(|x| x.request(req)).wait()
+        .map_err(|e| format!("error POSTing to Telegram: {}", e))
+        .and_then(|resp| {
+            let status = resp.status();
+            let resp: Result<estring::String<Chunk>, String> = resp.into_body().concat2().wait()
+                .map_err(|e| format!("error receiving response: {}", e))
+                .and_then(|c| estring::TryFrom::try_from(c)
+                    .map_err(|e| format!("error decoding response: {}", e)));
+            match (status, resp) {
+                (StatusCode::OK, Ok(resp)) => Ok(resp),
+                (_, Ok(resp)) => Err(format!("Telegram returned status {}:\n{}", status, &resp[..])),
+                (_, Err(e)) =>  Err(format!("Telegram returned status {} and error resding response:\n{}", status, e))
             }
-        }
-        Err(err) => Err(format!("error POSTing to Telegram: {}", err))
-    }
+        })
 }
+
