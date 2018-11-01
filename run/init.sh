@@ -24,7 +24,7 @@ arch-chroot $dir useradd -m -u 717 -g 717 eval
 rm -rf $dir/usr
 rm -rf $dir/var
 # mono has some configuration files (importantly, dllmaps)
-cp -R /etc/mono $dir/etc/mono
+# cp -R /etc/mono $dir/etc/mono
 
 # you may want to consider copying any java files too, if needed
 # cp -R /etc/java-jre8 $dir/etc/java-jre8

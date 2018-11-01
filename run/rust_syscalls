@@ -20,6 +20,7 @@ fstat
 futex
 getcwd
 getdents
+getdents64
 getegid
 geteuid
 getgid
@@ -50,6 +51,7 @@ pipe
 pipe2
 prctl
 pread64
+prlimit64
 read
 readlink
 rename
@@ -62,12 +64,14 @@ select
 set_robust_list
 set_tid_address
 setrlimit
+setpgid
 sigaltstack
 stat
 statfs
 sysinfo
 tgkill
 umask
+uname
 unlink
 vfork
 wait4

@@ -1,13 +1,15 @@
 [Unit]
 Description=tgbot
-After=network-online.target pyeval.service jseval.service fseval.service cseval.service
-Wants=network-online.target pyeval.service jseval.service fseval.service cseval.service
+# pyeval.service jseval.service fseval.service cseval.service
+After=network-online.target
+Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/home/eval/evalbot/tgbot
-WorkingDirectory=/home/eval/evalbot
+Environment=RUST_LOG=info
+ExecStart=/usr/local/lib/evalbot/tgbot
+WorkingDirectory=/usr/local/lib/evalbot
 User=eval
 Group=eval
 Restart=always
