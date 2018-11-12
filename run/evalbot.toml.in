@@ -11,7 +11,7 @@ cat <<EOF | rustc - -o ./out -C opt-level=2 -A warnings "$@" 2>&1
 $(cat)
 static VERSION: &'static str = "$(rustc -V | head -1 | tr -d '\n')";
 EOF
-exec ./out 2>&1
+exec ./out 2>&1 | sponge
 ''']
 # string to prepend to code, optional
 code_before = '''
@@ -41,37 +41,56 @@ path = "/usr/local/lib/evalbot/run_playpen"
 args = ["rust_syscalls", "{TIMEOUT}", "/usr/bin/dash", "-c", '''
 set -o errexit
 rustc - -o ./out -C opt-level=2 -A warnings "$@" 2>&1
-exec ./out 2>&1
+exec ./out 2>&1 | sponge
 ''']
 
 [languages.gcc]
 path = "/usr/local/lib/evalbot/run_playpen"
+code_before = '''
+#include <stdio.h>
+'''
 args = ["rust_syscalls", "{TIMEOUT}", "/usr/bin/dash", "-c", '''
-set -o errexit && echo -n "#include <stdio.h>\n$(cat)" | gcc -w -x c - -O3 -o out 2>&1 && exec ./out 2>&1
+set -o errexit
+gcc -w -x c - -O3 -o out 2>&1
+exec ./out 2>&1 | sponge
 ''']
 
 [languages.c]
 path = "/usr/local/lib/evalbot/run_playpen"
+code_before = '''
+#include <stdio.h>
+'''
 args = ["rust_syscalls", "{TIMEOUT}", "/usr/bin/dash", "-c", '''
-echo -n "#include <stdio.h>\n$(cat)" | clang -w -std=c11 -x c - -O3 -o out 2>&1
-exec ./out 2>&1
+set -o errexit
+clang -w -std=c11 -x c - -O3 -o out 2>&1
+exec ./out 2>&1 | sponge
 ''']
 
 [languages.'g++']
 path = "/usr/local/lib/evalbot/run_playpen"
+code_before = '''
+#include <iostream>
+'''
 args = ["rust_syscalls", "{TIMEOUT}", "/usr/bin/dash", "-c", '''
 set -o errexit
-echo -n "#include <iostream>\n$(cat)" | g++ -w -x c++ - -O3 -o out 2>&1
-exec ./out 2>&1
+g++ -w -x c++ - -O3 -o out 2>&1
+exec ./out 2>&1 | sponge
 ''']
 
 [languages.'c++']
 path = "/usr/local/lib/evalbot/run_playpen"
+code_before = '''
+#include <iostream>
+'''
 args = ["rust_syscalls", "{TIMEOUT}", "/usr/bin/dash", "-c", '''
 set -o errexit
-echo -n "#include <iostream>\n$(cat)" | clang++ -w -std=c++11 -x c++ - -O3 -o out 2>&1
-exec ./out 2>&1
+clang++ -w -std=c++11 -x c++ - -O3 -o out 2>&1
+exec ./out 2>&1 | sponge
 ''']
+
+[languages.'pl!']
+path = "/usr/local/lib/evalbot/run_playpen"
+args = ["perl_syscalls", "{TIMEOUT}", "/usr/bin/perl"]
 
 #[[languages]]
 #name = "cs"
