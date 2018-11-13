@@ -49,6 +49,7 @@ open
 openat
 pipe
 pipe2
+poll
 prctl
 pread64
 prlimit64
@@ -60,11 +61,12 @@ rt_sigaction
 rt_sigprocmask
 rt_sigreturn
 sched_getaffinity
+sched_yield
 select
+setpgid
+setrlimit
 set_robust_list
 set_tid_address
-setrlimit
-setpgid
 sigaltstack
 stat
 statfs
