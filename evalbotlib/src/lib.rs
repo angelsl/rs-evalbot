@@ -5,6 +5,7 @@ extern crate tokio;
 extern crate tokio_process;
 extern crate futures;
 #[macro_use] extern crate log;
+extern crate bytes;
 
 use std::collections::HashMap;
 use futures::Future;
@@ -95,14 +96,25 @@ impl EvalService {
 static EMPTY_U8: [u8; 0] = [];
 
 impl Language {
-    pub fn eval<T>(&self, code: T, timeout: Option<usize>) -> impl Future<Item = String, Error = String>
-        where T: AsRef<str> {
+    pub fn eval<T, U>(&self, code: T, timeout: Option<usize>, context: Option<U>) -> impl Future<Item = String, Error = String>
+        where T: AsRef<str>, U: AsRef<str> {
         debug!("evaluating {}: \"{}\"", self.name, code.as_ref());
         match self.backend {
             Backend::Exec { ref path, ref args, ref timeout_prefix } =>
-                Either::A(eval::exec(&path, args, timeout.or(self.timeout),
-                    timeout_prefix.as_ref().map(String::as_str),
-                    self.wrap_code(code.as_ref()))),
+                Either::A(Either::A(
+                    eval::exec(
+                        &path,
+                        args,
+                        timeout.or(self.timeout),
+                        timeout_prefix.as_ref().map(String::as_str),
+                        self.wrap_code(code.as_ref())))),
+            Backend::UnixSocket { ref socket_addr } =>
+                Either::A(Either::B(
+                    eval::unix(
+                        socket_addr,
+                        timeout,
+                        context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
+                        self.wrap_code(code.as_ref())))),
             _ => Either::B(futures::finished("Unimplemented".to_owned()))
         }
     }

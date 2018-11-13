@@ -138,7 +138,7 @@ fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Langua
     info!("({}) evaluating from {:?}: {:?}", msg_id, msg.from, msg.text.as_ref().map(|x| x.as_str()).unwrap_or(""));
     let code = msg.text.map(|x| x.trim().to_owned()).unwrap_or_else(|| "".to_owned());
     tokio::spawn(nullify_future!("sending message",
-        lang.eval(code, if no_limit { Some(0) } else { None })
+        lang.eval(code, if no_limit { Some(0) } else { None }, Some(format!("tg{}", chat_id)))
             .then(move |e| {
                 info!("({}) result: {:?}", msg_id, e.as_ref().map(|x| x.as_str()).unwrap_or(""));
                 tgbot.message(chat_id, telegram_wrap_result(&e.unwrap_or_else(|x| x)))
