@@ -4,10 +4,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=python_syscalls -- /usr/bin/python /usr/local/lib/evalbot/pyeval.py /run/eval/pyeval.sock
-WorkingDirectory=/home/eval/evalbot
-User=root
-Group=root
+ExecStart=/usr/local/lib/evalbot/run_playpen_fd python_syscalls 0 /usr/bin/python /usr/local/lib/evalbot_in/pyeval.py
+WorkingDirectory=/usr/local/lib/evalbot
+User=eval
+Group=eval
 Restart=always
 
 [Install]

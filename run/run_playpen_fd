@@ -1,0 +1,14 @@
+#!/usr/bin/bash
+syscalls=$1
+timeout=$2
+shift 2
+exec /usr/local/lib/evalbot/playpen \
+/opt/playpen \
+--hostname=MISSINGNO. \
+--mount-proc --user=eval \
+--devices=/dev/urandom:r,/dev/null:rw \
+--memory-limit=128 \
+--syscalls-file="$syscalls" \
+--timeout="$timeout" \
+--no-cloexec=3 -- \
+"$@" 2>&1

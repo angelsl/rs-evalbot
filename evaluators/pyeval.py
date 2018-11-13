@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import io, sys, struct, os, traceback, socketserver, socket
+import io, sys, struct, os, traceback, socketserver, socket, fcntl
+import contextlib, multiprocessing
 from multiprocessing import Process, Pipe
 from code import InteractiveInterpreter
 
@@ -39,14 +40,9 @@ def worker(pipe):
         etor = etors.setdefault(key, PyEval())
         try:
             out = io.StringIO()
-            sys.stdout = out
-            sys.stderr = out
-            sys.stdin = None
-            sys.__stdout__ = out
-            sys.__stderr__ = out
-            sys.__stdin__ = None
-
-            result = etor.runsource(code)
+            with contextlib.redirect_stdout(out):
+                with contextlib.redirect_stderr(out):
+                    result = etor.runsource(code)
         except:
             traceback.print_exc(file=out)
         finally:
@@ -54,24 +50,19 @@ def worker(pipe):
 
 class PyEvalServer(socketserver.UnixStreamServer):
     def server_bind(self):
+        os.set_inheritable(3, False)
+        self.socket = socket.socket(fileno=3)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        try:
-            os.unlink(self.server_address)
-        except OSError:
-            if os.path.exists(self.server_address):
-              raise
-
-        socketserver.UnixStreamServer.server_bind(self)
-        os.chmod(self.server_address, 0o777)
-        return
+    def socket_close(self):
+        pass # don't close systemd socket!
 
 class RequestHandler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
             self.handle_int()
         finally:
-            self.request.shutdown()
+            self.request.shutdown(socket.SHUT_RDWR)
             self.request.close()
 
     def handle_int(self):
@@ -87,9 +78,12 @@ class RequestHandler(socketserver.StreamRequestHandler):
         source = '\n'.join(codebuf)
 
         pipe.send((source, key))
-        if not pipe.poll(timeout / 1000):
+        if timeout > 0 and not pipe.poll(timeout / 1000):
             # no result after timeout seconds
-            thread.terminate()
+            thread.kill()
+            thread.join()
+            thread.close()
+            thread = None
             codebuf.clear()
             writeoutput(self.wfile, "(timed out)")
             return
@@ -121,7 +115,14 @@ pipe, childpipe = Pipe()
 thread = None
 
 def main():
-    server = PyEvalServer(sys.argv[1], RequestHandler)
+    multiprocessing.set_start_method('spawn')
+    server = PyEvalServer(None, RequestHandler, False)
+    try:
+        server.server_bind()
+        server.server_activate()
+    except:
+        server.server_close()
+        raise
     server.serve_forever()
 
 if __name__ == "__main__":
