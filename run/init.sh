@@ -14,6 +14,7 @@ pacstrap -c -d $dir \
     bash \
     filesystem \
     shadow \
+    man-db
 
 mkdir $dir/dev/shm
 mknod -m 666 $dir/dev/null c 1 3
@@ -23,6 +24,7 @@ arch-chroot $dir useradd -m -u 717 -g 717 eval
 
 rm -rf $dir/usr
 rm -rf $dir/var
+
 # mono has some configuration files (importantly, dllmaps)
 # cp -R /etc/mono $dir/etc/mono
 
@@ -30,8 +32,8 @@ rm -rf $dir/var
 # cp -R /etc/java-jre8 $dir/etc/java-jre8
 
 mkdir $dir/usr $dir/var
-mkdir $dir/run/eval
-chown 717:717 $dir/run/eval
+# mkdir $dir/run/eval
+# chown 717:717 $dir/run/eval
 
 mksquashfs $dir playpen.sqfs
 umount $dir
