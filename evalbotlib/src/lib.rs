@@ -112,7 +112,7 @@ impl Language {
                 Either::A(Either::B(
                     eval::unix(
                         socket_addr,
-                        timeout,
+                        timeout.or(self.timeout),
                         context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
                         self.wrap_code(code.as_ref())))),
             _ => Either::B(futures::finished("Unimplemented".to_owned()))

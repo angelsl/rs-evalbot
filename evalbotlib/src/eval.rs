@@ -1,10 +1,11 @@
 use std::fmt::Display;
 use std::process::{Command, Stdio};
+use std::io::Cursor;
 
 use tokio::prelude::*;
 use tokio_process::CommandExt;
-use tokio::{io::{read_exact, write_all}, net::unix::UnixStream};
-use bytes::{BytesMut, IntoBuf, Buf, BufMut};
+use tokio::{io::{flush, read_exact, write_all}, net::unix::UnixStream};
+use bytes::{BytesMut, Buf, BufMut};
 
 pub fn exec<'a, I, S, T>(
     path: &str,
@@ -69,7 +70,7 @@ fn make_persistent_input<T, U>(timeout: Option<usize>, context: Option<T>, code:
     let codeblen = codeb.len() as u32;
 
     let mut buf = BytesMut::with_capacity(12usize + contextblen as usize + codeblen as usize);
-    buf.put_u32_le(timeout);
+    buf.put_u32_le(timeout*1000);
     buf.put_u32_le(contextblen);
     buf.put_u32_le(codeblen);
     buf.put(&contextb[..contextblen as usize]);
@@ -89,10 +90,17 @@ fn persistent<'a, F, G>(connfut: F, buf: BytesMut)
         .map_err(|e| format!("error connecting: {}", e))
         .and_then(move |s| write_all(s, buf)
             .map_err(|e| format!("error writing: {}", e)))
-        .and_then(|(s, _)| read_exact(s, BytesMut::with_capacity(4))
+        .and_then(|(s, _)| flush(s)
+            .map_err(|e| format!("error flushing: {}", e)))
+        .and_then(|s| read_exact(s, [0u8; 4])
             .map_err(|e| format!("error reading result length: {}", e)))
         .and_then(|(s, lenb)|
-            read_exact(s, BytesMut::with_capacity(lenb.into_buf().get_u32_le() as usize))
+            read_exact(s, {
+                let outlen = Cursor::new(lenb).get_u32_le() as usize;
+                let mut buf = BytesMut::with_capacity(outlen);
+                buf.resize(outlen, 0);
+                buf
+            })
             .map_err(|e| format!("error reading result: {}", e)))
         .map(|(_, outb)| String::from_utf8_lossy(&outb).into_owned())
 }
