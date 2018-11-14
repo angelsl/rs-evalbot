@@ -12,6 +12,7 @@ use backend::{EvalService, Language, util};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
+use std::borrow::Cow;
 
 use futures::{Future, Stream, IntoFuture};
 use telebot::RcBot;
@@ -78,20 +79,25 @@ struct TgSvc {
     service: EvalService,
 }
 
-fn telegram_wrap_result(s: &str) -> String {
+fn telegram_wrap_result(s: &str, group: bool) -> String {
     if s.is_empty() {
         "no output".to_owned()
     } else {
         let mut r = "<pre>".to_owned();
         let input = s.as_bytes();
-        r.push_str(&String::from_utf8_lossy(&input[..512.min(input.len())])
-            .replace('\u{FFFD}', "")
+        let mut cut_input = String::from_utf8_lossy(&input[..512.min(input.len())]);
+        if group {
+            cut_input = Cow::Owned(cut_input.lines().take(10).collect::<Vec<_>>().join("\n"));
+        }
+        r.push_str(&cut_input
+            .replace(|c: char| c =='\u{FFFD}' || (c.is_control() && c != '\n' && c != '\t'), "")
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
             .replace('"', "&quot;"));
         r.push_str("</pre>");
-        if input.len() > 512 {
+        if cut_input.len() + 1 // we also cut off the trailing \n
+            < input.len() {
             r.push_str("... (truncated)");
         }
         r
@@ -119,9 +125,10 @@ fn handle_update((tgbot, update): (RcBot, Update), tgsvc: &Arc<TgSvc>) -> Result
 fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Language>, is_hash: bool)
     -> impl Future<Item = (), Error = ()> {
     let chat_id = msg.chat.id;
+    let group = msg.chat.kind != "private";
     if let Ok(wl) = tgsvc.whitelist.read() {
-        if msg.chat.kind != "private" && !wl.group_ok(chat_id)
-            || msg.chat.kind == "private" && !wl.priv_ok(chat_id) {
+        if group && !wl.group_ok(chat_id)
+            || !group && !wl.priv_ok(chat_id) {
             tokio::spawn(nullify_future!("sending message",
                 tgbot.message(chat_id, format!("You or this group is not on the whitelist. Seek help. ID: {}", chat_id)).send()));
             return Ok(()).into_future();
@@ -136,12 +143,16 @@ fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Langua
     let no_limit = is_hash && is_from_owner(&msg, tgsvc);
     let msg_id = msg.message_id;
     info!("({}) evaluating from {:?}: {:?}", msg_id, msg.from, msg.text.as_ref().map(|x| x.as_str()).unwrap_or(""));
-    let code = msg.text.map(|x| x.trim().to_owned()).unwrap_or_else(|| "".to_owned());
+    let code = msg.text.map(|x| {
+        let mut r = x.trim_left().to_owned();
+        r.push_str("\n");
+        r
+    }).unwrap_or_else(|| "".to_owned());
     tokio::spawn(nullify_future!("sending message",
         lang.eval(code, if no_limit { Some(0) } else { None }, Some(format!("tg{}", chat_id)))
             .then(move |e| {
                 info!("({}) result: {:?}", msg_id, e.as_ref().map(|x| x.as_str()).unwrap_or(""));
-                tgbot.message(chat_id, telegram_wrap_result(&e.unwrap_or_else(|x| x)))
+                tgbot.message(chat_id, telegram_wrap_result(&e.unwrap_or_else(|x| x), group))
                     .parse_mode(ParseMode::HTML)
                     .reply_to_message_id(msg_id)
                     .send()
