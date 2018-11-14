@@ -177,7 +177,7 @@ macro_rules! persistent {
             Either::A(fut.timeout(Duration::from_secs(timeout as u64)))
         } else {
             Either::B(fut.map_err(|e| timeout::Error::inner(e)))
-        }.then(move |r| match r {
+        }.then(|r| match r {
             Ok((s, lenb)) => Either::A(read_exact(s, {
                 // FIXME configurable max
                 let outlen = Cursor::new(lenb).get_u32_le().min(1024) as usize;
@@ -187,11 +187,13 @@ macro_rules! persistent {
             }).map_err(|e| format!("error reading result: {}", e))
                 .map(|(_, ref outb)| String::from_utf8_lossy(outb).into_owned())),
             Err(e) => Either::B(if e.is_elapsed() {
-                do_persistent_timeout(&$lang.timeout_cmdline);
-                Ok("time limit exceeded".to_owned()).into_future()
+                Err("time limit exceeded".to_owned()).into_future()
             } else {
-                Err(format!("error from timeout: {}", e)).into_future()
+                Err(format!("error: {}", e)).into_future()
             })
+        }).map_err(move |e| {
+            do_persistent_timeout(&$lang.timeout_cmdline);
+            e
         })
     });
 }
