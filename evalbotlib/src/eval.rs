@@ -2,6 +2,7 @@ use std::process::{Command, Stdio};
 use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
+use std::os::unix::process::ExitStatusExt;
 
 use tokio::prelude::*;
 use tokio::prelude::future::Either;
@@ -11,6 +12,80 @@ use tokio::{io::{flush, read_exact, write_all}, net::unix::UnixStream};
 use bytes::{BytesMut, Buf, BufMut};
 
 use crate::{ExecBackend, UnixSocketBackend};
+
+fn strsig(sig: i32) -> &'static str {
+    match sig {
+        1 => "Hangup",
+        2 => "Interrupt",
+        3 => "Quit",
+        4 => "Illegal instruction",
+        5 => "Trace/breakpoint trap",
+        6 => "Aborted",
+        7 => "Bus error",
+        8 => "Floating point exception",
+        9 => "Killed",
+        10 => "User defined signal 1",
+        11 => "Segmentation fault",
+        12 => "User defined signal 2",
+        13 => "Broken pipe",
+        14 => "Alarm clock",
+        15 => "Terminated",
+        16 => "Stack fault",
+        17 => "Child exited",
+        18 => "Continued",
+        19 => "Stopped (signal)",
+        20 => "Stopped",
+        21 => "Stopped (tty input)",
+        22 => "Stopped (tty output)",
+        23 => "Urgent I/O condition",
+        24 => "CPU time limit exceeded",
+        25 => "File size limit exceeded",
+        26 => "Virtual timer expired",
+        27 => "Profiling timer expired",
+        28 => "Window changed",
+        29 => "I/O possible",
+        30 => "Power failure",
+        31 => "Bad system call",
+        _ => "Unknown signal"
+    }
+}
+
+fn strsigabbrev(sig: i32) -> &'static str {
+    match sig {
+        1 => "SIGHUP",
+        2 => "SIGINT",
+        3 => "SIGQUIT",
+        4 => "SIGILL",
+        5 => "SIGTRAP",
+        6 => "SIGABRT",
+        7 => "SIGBUS",
+        8 => "SIGFPE",
+        9 => "SIGKILL",
+        10 => "SIGUSR1",
+        11 => "SIGSEGV",
+        12 => "SIGUSR2",
+        13 => "SIGPIPE",
+        14 => "SIGALRM",
+        15 => "SIGTERM",
+        16 => "SIGSTKFLT",
+        17 => "SIGCHLD",
+        18 => "SIGCONT",
+        19 => "SIGSTOP",
+        20 => "SIGTSTP",
+        21 => "SIGTTIN",
+        22 => "SIGTTOU",
+        23 => "SIGURG",
+        24 => "SIGXCPU",
+        25 => "SIGXFSZ",
+        26 => "SIGVTALRM",
+        27 => "SIGPROF",
+        28 => "SIGWINCH",
+        29 => "SIGPOLL",
+        30 => "SIGPWR",
+        31 => "SIGSYS",
+        _ => "(unknown)"
+    }
+}
 
 pub fn exec<'a, T>(
     lang: Arc<ExecBackend>,
@@ -55,6 +130,8 @@ pub fn exec<'a, T>(
                     }
                     if let Some(code) = o.status.code() {
                         r.push_str(&format!("exited with status {}\n", code));
+                    } else if let Some(code) = o.status.signal() {
+                        r.push_str(&format!("signalled with {} ({})\n", strsig(code), strsigabbrev(code)));
                     } else {
                         r.push_str("exited with unknown failure\n");
                     }
