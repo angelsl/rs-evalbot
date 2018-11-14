@@ -80,6 +80,7 @@ struct TgSvc {
 }
 
 fn telegram_wrap_result(s: &str, group: bool) -> String {
+    // FIXME configurable max-lines and max-bytes
     if s.is_empty() {
         "no output".to_owned()
     } else {
