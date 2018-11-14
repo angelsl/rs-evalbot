@@ -152,11 +152,14 @@ fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Langua
     tokio::spawn(nullify_future!("sending message",
         lang.eval(code, if no_limit { Some(0) } else { None }, Some(format!("tg{}", chat_id)))
             .then(move |e| {
+                let ok = e.is_ok();
                 info!("({}) result: {:?}", msg_id, e.as_ref().map(|x| x.as_str()).unwrap_or(""));
-                tgbot.message(chat_id, telegram_wrap_result(&e.unwrap_or_else(|x| x), group))
-                    .parse_mode(ParseMode::HTML)
-                    .reply_to_message_id(msg_id)
-                    .send()
+                let msg = tgbot.message(chat_id, e.map(|r| telegram_wrap_result(&r, group)).unwrap_or_else(|e| e));
+                if ok {
+                    msg.parse_mode(ParseMode::HTML)
+                } else {
+                    msg
+                }.reply_to_message_id(msg_id).send()
             })));
 
     Ok(()).into_future()
