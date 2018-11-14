@@ -44,3 +44,4 @@ sigaltstack
 socket
 stat
 sysinfo
+write
