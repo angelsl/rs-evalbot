@@ -44,10 +44,23 @@ pub fn exec<'a, T>(
                         .map_err(|e| format!("failed to wait for process: {}", e)))
             })
             .map_err(|e| format!("unknown error in exec: {}", e))
-            .map(|o| format!("{}{}",
-                String::from_utf8_lossy(&o.stderr),
-                String::from_utf8_lossy(&o.stdout),
-            )))
+            .map(|o| {
+                let mut r = format!("{}{}",
+                    String::from_utf8_lossy(&o.stderr),
+                    String::from_utf8_lossy(&o.stdout),
+                );
+                if !o.status.success() {
+                    if !r.ends_with('\n') {
+                        r.push_str("\n");
+                    }
+                    if let Some(code) = o.status.code() {
+                        r.push_str(&format!("exited with status {}\n", code));
+                    } else {
+                        r.push_str("exited with unknown failure\n");
+                    }
+                }
+                r
+            }))
     } else {
         Either::B(Err("empty cmdline".to_owned()).into_future())
     }
