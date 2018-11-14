@@ -17,7 +17,28 @@ use std::sync::Arc;
 pub mod util;
 mod eval;
 
-fn empty_string() -> String { "".to_owned() }
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
+struct EvalServiceCfg {
+    timeout: usize,
+    languages: HashMap<String, LanguageCfg>
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct LanguageCfg {
+    code_before: Option<String>,
+    code_after: Option<String>,
+    timeout: Option<usize>,
+    #[serde(flatten)]
+    backend: BackendCfg
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[serde(untagged)]
+enum BackendCfg {
+    Exec(ExecBackend),
+    Network(NetworkBackend),
+    UnixSocket(UnixSocketBackend)
+}
 
 #[derive(Clone, Debug)]
 pub struct EvalService {
@@ -25,37 +46,53 @@ pub struct EvalService {
     languages: HashMap<String, Arc<Language>>
 }
 
-#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
-struct EvalServiceCfg {
-    timeout: usize,
-    languages: HashMap<String, Language>
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Language {
-    timeout: Option<usize>,
-    #[serde(skip)]
-    #[serde(default = "empty_string")]
     name: String,
     code_before: Option<String>,
     code_after: Option<String>,
-    #[serde(flatten)]
+    timeout: Option<usize>,
     backend: Backend
 }
 
+#[derive(Clone, PartialEq, Debug)]
+enum Backend {
+    Exec(Arc<ExecBackend>),
+    Network(Arc<NetworkBackend>),
+    UnixSocket(Arc<UnixSocketBackend>)
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-#[serde(untagged)]
-pub enum Backend {
-    Exec {
-        path: String,
-        args: Vec<String>,
-        timeout_prefix: Option<String>
-    },
-    Network {
-        network_addr: String
-    },
-    UnixSocket {
-        socket_addr: String
+pub struct ExecBackend {
+    cmdline: Vec<String>,
+    timeout_prefix: Option<String>
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct NetworkBackend {
+    network_addr: String,
+    timeout_cmdline: Option<Vec<String>>
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct UnixSocketBackend {
+    socket_addr: String,
+    timeout_cmdline: Option<Vec<String>>
+}
+
+impl Language {
+    fn from(name: String, default_timeout: usize, cfg: LanguageCfg) -> Self {
+        Language {
+            name,
+            code_before: cfg.code_before,
+            code_after: cfg.code_after,
+            timeout: cfg.timeout.or_else(|| Some(default_timeout)),
+            backend: match cfg.backend {
+                BackendCfg::Exec(x) => Backend::Exec(Arc::new(x)),
+                BackendCfg::Network(x) => Backend::Network(Arc::new(x)),
+                BackendCfg::UnixSocket(x) => Backend::UnixSocket(Arc::new(x)),
+            }
+        }
     }
 }
 
@@ -67,10 +104,8 @@ impl EvalService {
             languages: HashMap::new()
         };
         let timeout = cfg.timeout;
-        for (name, mut lang) in cfg.languages.into_iter() {
-            lang.name = name.clone();
-            lang.timeout = lang.timeout.or_else(|| Some(timeout));
-            new.languages.insert(name.clone(), Arc::new(lang));
+        for (name, lang) in cfg.languages.into_iter() {
+            new.languages.insert(name.clone(), Arc::new(Language::from(name, timeout,lang)));
         }
         new
     }
@@ -100,18 +135,16 @@ impl Language {
         where T: AsRef<str>, U: AsRef<str> {
         debug!("evaluating {}: \"{}\"", self.name, code.as_ref());
         match self.backend {
-            Backend::Exec { ref path, ref args, ref timeout_prefix } =>
+            Backend::Exec(ref lang) =>
                 Either::A(Either::A(
                     eval::exec(
-                        &path,
-                        args,
+                        lang.clone(),
                         timeout.or(self.timeout),
-                        timeout_prefix.as_ref().map(String::as_str),
                         self.wrap_code(code.as_ref())))),
-            Backend::UnixSocket { ref socket_addr } =>
+            Backend::UnixSocket(ref lang) =>
                 Either::A(Either::B(
                     eval::unix(
-                        socket_addr,
+                        lang.clone(),
                         timeout.or(self.timeout),
                         context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
                         self.wrap_code(code.as_ref())))),
@@ -140,21 +173,17 @@ impl Language {
 
 #[cfg(test)]
 mod test {
-    use toml;
-
     #[test]
     fn test_decode() {
         let toml = r#"
 timeout = 20
 
 [languages.rs]
-path = "rustc"
-args = ["-O"]
+cmdline = ["rustc", "-O"]
 
 [languages.'rs!']
 timeout = 0
-path = "rustc"
-args = ["-O"]
+cmdline = ["rustc", "-O"]
 "#;
         println!("{:#?}", super::EvalService::from_toml(toml).unwrap());
     }

@@ -1,62 +1,119 @@
-use std::fmt::Display;
 use std::process::{Command, Stdio};
 use std::io::Cursor;
+use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::prelude::*;
+use tokio::prelude::future::Either;
+use tokio::timer::timeout;
 use tokio_process::CommandExt;
 use tokio::{io::{flush, read_exact, write_all}, net::unix::UnixStream};
 use bytes::{BytesMut, Buf, BufMut};
 
-pub fn exec<'a, I, S, T>(
-    path: &str,
-    args: &I,
+use crate::{ExecBackend, UnixSocketBackend};
+
+pub fn exec<'a, T>(
+    lang: Arc<ExecBackend>,
     timeout: Option<usize>,
-    timeout_prefix: Option<&str>,
     code: T) -> impl Future<Item = String, Error = String> + 'a
-        where
-            for<'b> &'b I: IntoIterator<Item = &'b S>,
-            S: AsRef<str> + PartialEq,
-            T: AsRef<[u8]> + 'a {
+        where T: AsRef<[u8]> + 'a {
     let timeout_arg = timeout
-        .map(|t| format!("{}{}", timeout_prefix.unwrap_or(""), t));
+        .map(|t| format!("{}{}", lang.timeout_prefix.as_ref().map(String::as_str).unwrap_or(""), t));
     let timeout_arg_ref = timeout_arg.as_ref().map(String::as_str);
-    let mut cmd = Command::new(path);
-    cmd.args(args.into_iter()
-            .filter_map(|a| if a.as_ref() == "{TIMEOUT}" {
+    if let Some(path) = lang.cmdline.iter().nth(0) {
+        let mut cmd = Command::new(path);
+        cmd.args(lang.cmdline.iter()
+            .skip(1)
+            .filter_map(|a| if a == "{TIMEOUT}" {
                 timeout_arg_ref
             } else {
                 Some(a.as_ref())
             }))
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    debug!("spawning {:?}", cmd);
-    cmd.spawn_async()
-        .map_err(|e| format!("failed to exec: {}", e))
-        .into_future()
-        .and_then(|mut child| {
-            child.stdin().take().ok_or_else(|| "stdin missing".to_owned()).into_future()
-                .and_then(|stdin|
-                    write_all(stdin, code)
-                        .map_err(|e| format!("failed to write to stdin: {}", e))
-                )
-                .and_then(|_| child.wait_with_output()
-                    .map_err(|e| format!("failed to wait for process: {}", e)))
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        debug!("spawning {:?}", cmd);
+        Either::A(cmd.spawn_async()
+            .map_err(|e| format!("failed to exec: {}", e))
+            .into_future()
+            .and_then(|mut child| {
+                child.stdin().take().ok_or_else(|| "stdin missing".to_owned()).into_future()
+                    .and_then(|stdin|
+                        write_all(stdin, code)
+                            .map_err(|e| format!("failed to write to stdin: {}", e))
+                    )
+                    .and_then(|_| child.wait_with_output()
+                        .map_err(|e| format!("failed to wait for process: {}", e)))
+            })
+            .map_err(|e| format!("unknown error in exec: {}", e))
+            .map(|o| format!("{}{}",
+                String::from_utf8_lossy(&o.stderr),
+                String::from_utf8_lossy(&o.stdout),
+            )))
+    } else {
+        Either::B(Err("empty cmdline".to_owned()).into_future())
+    }
+}
+
+macro_rules! persistent {
+    ($lang:expr, $connfut:expr, $timeout:expr, $buf:expr) => ({
+        let buf = $buf;
+        let fut = $connfut
+            .map_err(|e| format!("error connecting: {}", e))
+            .and_then(move |s| write_all(s, buf)
+                .map_err(|e| format!("error writing: {}", e)))
+            .and_then(|(s, _)| flush(s)
+                .map_err(|e| format!("error flushing: {}", e)))
+            .and_then(|s| read_exact(s, [0u8; 4])
+                .map_err(|e| format!("error reading result length: {}", e)));
+        if let Some(timeout) = $timeout {
+            Either::A(fut.timeout(Duration::from_secs(timeout as u64)))
+        } else {
+            Either::B(fut.map_err(|e| timeout::Error::inner(e)))
+        }.then(move |r| match r {
+            Ok((s, lenb)) => Either::A(read_exact(s, {
+                let outlen = Cursor::new(lenb).get_u32_le() as usize;
+                let mut buf = BytesMut::with_capacity(outlen);
+                buf.resize(outlen, 0);
+                buf
+            }).map_err(|e| format!("error reading result: {}", e))
+                .map(|(_, ref outb)| String::from_utf8_lossy(outb).into_owned())),
+            Err(e) => Either::B(if e.is_elapsed() {
+                do_persistent_timeout(&$lang.timeout_cmdline);
+                Ok("time limit exceeded".to_owned()).into_future()
+            } else {
+                Err(format!("error from timeout: {}", e)).into_future()
+            })
         })
-        .map_err(|e| format!("unknown error in exec: {}", e))
-        .map(|o| format!("{}{}",
-            String::from_utf8_lossy(&o.stderr),
-            String::from_utf8_lossy(&o.stdout),
-        ))
+    });
 }
 
 pub fn unix<'a, T, U>(
-    path: &str,
+    lang: Arc<UnixSocketBackend>,
     timeout: Option<usize>,
     context: Option<U>,
     code: T) -> impl Future<Item = String, Error = String> + 'a
         where
             T: AsRef<[u8]>,
             U: AsRef<[u8]> {
-    persistent(UnixStream::connect(path), make_persistent_input(timeout, context, code))
+    persistent!(lang,
+        UnixStream::connect(&lang.socket_addr),
+        timeout,
+        make_persistent_input(timeout, context, code))
+}
+
+fn do_persistent_timeout(cmdline: &Option<Vec<String>>) {
+    if let Some(cmdline) = cmdline.as_ref() {
+        if let Some(path) = cmdline.iter().nth(0) {
+            debug!("timeout kill: launching {:?}", cmdline);
+            tokio::spawn(Command::new(path)
+                .args(cmdline.iter().skip(1))
+                .spawn_async()
+                .map_err(|e| error!("failed to exec for timeout kill: {}", e))
+                .into_future()
+                .and_then(|c| c
+                    .map_err(|e| error!("failed to exec for timeout kill: {}", e)))
+                    .map(|_| ()));
+        }
+    }
 }
 
 fn make_persistent_input<T, U>(timeout: Option<usize>, context: Option<T>, code: U) -> BytesMut
@@ -76,31 +133,4 @@ fn make_persistent_input<T, U>(timeout: Option<usize>, context: Option<T>, code:
     buf.put(&contextb[..contextblen as usize]);
     buf.put(&codeb[..codeblen as usize]);
     buf
-}
-
-fn persistent<'a, F, G>(connfut: F, buf: BytesMut)
-    -> impl Future<Item = String, Error = String> + 'a
-        where
-            F: Future<Item = G> + 'a,
-            <F as Future>::Error: Display,
-            G: AsyncRead + AsyncWrite + 'a {
-    // FIXME potentially make this work without copying?
-    // lifetime issues though
-    connfut
-        .map_err(|e| format!("error connecting: {}", e))
-        .and_then(move |s| write_all(s, buf)
-            .map_err(|e| format!("error writing: {}", e)))
-        .and_then(|(s, _)| flush(s)
-            .map_err(|e| format!("error flushing: {}", e)))
-        .and_then(|s| read_exact(s, [0u8; 4])
-            .map_err(|e| format!("error reading result length: {}", e)))
-        .and_then(|(s, lenb)|
-            read_exact(s, {
-                let outlen = Cursor::new(lenb).get_u32_le() as usize;
-                let mut buf = BytesMut::with_capacity(outlen);
-                buf.resize(outlen, 0);
-                buf
-            })
-            .map_err(|e| format!("error reading result: {}", e)))
-        .map(|(_, outb)| String::from_utf8_lossy(&outb).into_owned())
 }
