@@ -3,7 +3,7 @@ extern crate serde;
 extern crate toml;
 extern crate tokio;
 extern crate tokio_process;
-extern crate futures;
+#[macro_use] extern crate futures;
 #[macro_use] extern crate log;
 extern crate bytes;
 

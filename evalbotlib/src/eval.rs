@@ -115,22 +115,41 @@ pub fn exec<'a, T>(
                         write_all(stdin, code)
                             .map_err(|e| format!("failed to write to stdin: {}", e))
                     )
-                    .and_then(|_| child.wait_with_output()
-                        .map_err(|e| format!("failed to wait for process: {}", e)))
+                    .and_then(move |_| {
+                        let stdout = match child.stdout().take() {
+                            // FIXME configurable max
+                            Some(io) => Either::A(helper::read_up_to(io, vec![0u8; 1024])
+                                .map(|(_, mut v, s)| {
+                                    v.truncate(s);
+                                    v
+                                })),
+                            None => Either::B(Ok(Vec::new()).into_future()),
+                        };
+                        let stderr = match child.stderr().take() {
+                            // FIXME configurable max
+                            Some(io) => Either::A(helper::read_up_to(io, vec![0u8; 1024])
+                                .map(|(_, mut v, s)| {
+                                    v.truncate(s);
+                                    v
+                                })),
+                            None => Either::B(Ok(Vec::new()).into_future()),
+                        };
+                        child.join3(stdout, stderr)
+                    }.map_err(|e| format!("failed to wait for process: {}", e)))
             })
             .map_err(|e| format!("unknown error in exec: {}", e))
-            .map(|o| {
+            .map(|(status, stdout, stderr)| {
                 let mut r = format!("{}{}",
-                    String::from_utf8_lossy(&o.stderr),
-                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&stderr),
+                    String::from_utf8_lossy(&stdout),
                 );
-                if !o.status.success() {
+                if !status.success() {
                     if !r.ends_with('\n') {
                         r.push_str("\n");
                     }
-                    if let Some(code) = o.status.code() {
+                    if let Some(code) = status.code() {
                         r.push_str(&format!("exited with status {}\n", code));
-                    } else if let Some(code) = o.status.signal() {
+                    } else if let Some(code) = status.signal() {
                         r.push_str(&format!("signalled with {} ({})\n", strsig(code), strsigabbrev(code)));
                     } else {
                         r.push_str("exited with unknown failure\n");
@@ -160,7 +179,8 @@ macro_rules! persistent {
             Either::B(fut.map_err(|e| timeout::Error::inner(e)))
         }.then(move |r| match r {
             Ok((s, lenb)) => Either::A(read_exact(s, {
-                let outlen = Cursor::new(lenb).get_u32_le() as usize;
+                // FIXME configurable max
+                let outlen = Cursor::new(lenb).get_u32_le().min(1024) as usize;
                 let mut buf = BytesMut::with_capacity(outlen);
                 buf.resize(outlen, 0);
                 buf
@@ -223,4 +243,72 @@ fn make_persistent_input<T, U>(timeout: Option<usize>, context: Option<T>, code:
     buf.put(&contextb[..contextblen as usize]);
     buf.put(&codeb[..codeblen as usize]);
     buf
+}
+
+mod helper {
+    // https://docs.rs/tokio-io/0.1.10/src/tokio_io/io/read_exact.rs.html
+
+    use std::io;
+    use std::mem;
+
+    use futures::{Poll, Future};
+
+    use tokio::io::AsyncRead;
+
+    #[derive(Debug)]
+    pub struct ReadUpTo<A, T> {
+        state: State<A, T>,
+    }
+
+    #[derive(Debug)]
+    enum State<A, T> {
+        Reading {
+            a: A,
+            buf: T,
+            pos: usize,
+        },
+        Empty,
+    }
+
+    pub fn read_up_to<A, T>(a: A, buf: T) -> ReadUpTo<A, T>
+        where A: AsyncRead,
+            T: AsMut<[u8]>,
+    {
+        ReadUpTo {
+            state: State::Reading {
+                a,
+                buf,
+                pos: 0,
+            },
+        }
+    }
+
+    impl<A, T> Future for ReadUpTo<A, T>
+        where A: AsyncRead,
+            T: AsMut<[u8]>,
+    {
+        type Item = (A, T, usize);
+        type Error = io::Error;
+
+        fn poll(&mut self) -> Poll<(A, T, usize), io::Error> {
+            match self.state {
+                State::Reading { ref mut a, ref mut buf, ref mut pos } => {
+                    let buf = buf.as_mut();
+                    while *pos < buf.len() {
+                        let n = try_ready!(a.poll_read(&mut buf[*pos..]));
+                        *pos += n;
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+                State::Empty => panic!("poll a ReadUpTo after it's done"),
+            }
+
+            match mem::replace(&mut self.state, State::Empty) {
+                State::Reading { a, buf, pos } => Ok((a, buf, pos).into()),
+                State::Empty => panic!(),
+            }
+        }
+    }
 }
