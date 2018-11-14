@@ -4,10 +4,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=node_syscalls -- /usr/bin/node /usr/local/lib/evalbot/jseval.js /run/eval/jseval.sock
-WorkingDirectory=/home/eval/evalbot
-User=root
-Group=root
+ExecStart=/usr/local/lib/evalbot/run_playpen_fd node_syscalls 0 /usr/bin/node /usr/local/lib/evalbot_in/jseval.js
+WorkingDirectory=/usr/local/lib/evalbot
+User=eval
+Group=eval
 Restart=always
 
 [Install]
