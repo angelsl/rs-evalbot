@@ -2,8 +2,6 @@ accept4
 access
 arch_prctl
 brk
-chdir
-clone
 close
 dup
 execve
@@ -12,7 +10,6 @@ exit_group
 fcntl
 fstat
 futex
-getcwd
 getdents64
 getegid
 geteuid
@@ -31,7 +28,6 @@ mmap
 mprotect
 munmap
 openat
-pipe2
 poll
 prlimit64
 read
@@ -46,8 +42,5 @@ set_tid_address
 shutdown
 sigaltstack
 socket
-socketpair
 stat
 sysinfo
-wait4
-write

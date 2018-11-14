@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import io, sys, struct, os, traceback, socketserver, socket, fcntl
-import contextlib, multiprocessing
-from multiprocessing import Process, Pipe
+import contextlib
 from code import InteractiveInterpreter
 
 class PyEval(InteractiveInterpreter):
@@ -32,22 +31,6 @@ def writeoutput(outbuf, opt):
         print("error returning output:")
         traceback.print_exc(file=sys.stderr)
 
-
-def worker(pipe):
-    etors = {}
-    while True:
-        code, key = pipe.recv()
-        etor = etors.setdefault(key, PyEval())
-        try:
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                with contextlib.redirect_stderr(out):
-                    result = etor.runsource(code)
-        except:
-            traceback.print_exc(file=out)
-        finally:
-            pipe.send((result, out.getvalue()))
-
 class PyEvalServer(socketserver.UnixStreamServer):
     def server_bind(self):
         os.set_inheritable(3, False)
@@ -66,56 +49,36 @@ class RequestHandler(socketserver.StreamRequestHandler):
             self.request.close()
 
     def handle_int(self):
-        global pipe, childpipe, codebufs, thread
-
-        if thread is None or not thread.is_alive():
-            thread = Process(target=worker, args=(childpipe,), daemon=True)
-            thread.start()
+        global codebufs, etors
 
         timeout, key, codefragment = readinput(self.rfile)
         codebuf = codebufs.setdefault(key, [])
+        etor = etors.setdefault(key, PyEval())
+
         codebuf.append(codefragment)
         source = '\n'.join(codebuf)
 
-        pipe.send((source, key))
-        if timeout > 0 and not pipe.poll(timeout / 1000):
-            # no result after timeout seconds
-            thread.kill()
-            thread.join()
-            thread.close()
-            thread = None
-            codebuf.clear()
-            writeoutput(self.wfile, "(timed out)")
-            return
-
         try:
-            # pipe may be closed even though poll() returns True
-            more, result = pipe.recv()
-        except EOFError:
-            codebuf.clear()
-            writeoutput(self.wfile, "(worker process died)")
-            return
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                with contextlib.redirect_stderr(out):
+                    more = etor.runsource(source)
         except:
-            codebuf.clear()
-            writeoutput(self.wfile, "(unexpected exception)")
-            traceback.print_exc(file=sys.stderr)
-            return
+            traceback.print_exc(file=out)
 
         if not more:
             codebuf.clear()
-            writeoutput(self.wfile, result)
+            writeoutput(self.wfile, out.getvalue())
         elif more:
             writeoutput(self.wfile, "(continue...)")
         else:
             codebuf.clear()
             writeoutput(self.wfile, "something weird happened")
 
+etors = {}
 codebufs = {}
-pipe, childpipe = Pipe()
-thread = None
 
 def main():
-    multiprocessing.set_start_method('spawn')
     server = PyEvalServer(None, RequestHandler, False)
     try:
         server.server_bind()
