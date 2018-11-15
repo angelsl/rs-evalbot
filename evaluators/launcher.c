@@ -27,6 +27,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "usage: %s <path to daemon> [args...]\n", argv[0]);
         return 1;
     }
+    unlink(SOCKETPATH);
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKETPATH, sizeof(addr.sun_path) - 1);
@@ -37,6 +38,7 @@ int main(int argc, char *argv[]) {
         check_posix(dup2(fd, 3), "dup2");
         check_posix(close(fd), "close");
     }
+    check_posix(listen(3, 128), "listen");
     check_posix(execv(argv[1], argv + 1), "execv");
     return 1;
 }
