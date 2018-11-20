@@ -18,6 +18,7 @@ pacstrap -c -d $dir \
 
 mkdir $dir/dev/shm
 mknod -m 666 $dir/dev/null c 1 3
+mknod -m 666 $dir/dev/zero c 1 5
 mknod -m 644 $dir/dev/urandom c 1 9
 arch-chroot $dir groupadd -g 717 eval
 arch-chroot $dir useradd -m -u 717 -g 717 eval
@@ -31,7 +32,7 @@ rm -rf $dir/var
 # you may want to consider copying any java files too, if needed
 # cp -R /etc/java-jre8 $dir/etc/java-jre8
 
-mkdir $dir/usr $dir/var
+mkdir -p $dir/usr $dir/var $dir/opt/dotnet
 # mkdir $dir/run/eval
 # chown 717:717 $dir/run/eval
 

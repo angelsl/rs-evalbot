@@ -6,7 +6,7 @@ exec /usr/local/lib/evalbot/playpen \
 /opt/playpen \
 --hostname=MISSINGNO. \
 --mount-proc --user=eval \
---devices=/dev/urandom:r,/dev/null:rw \
+--devices=/dev/urandom:r,/dev/null:rw,/dev/zero:rw \
 --memory-limit=128 \
 --syscalls-file="$syscalls" \
 --timeout="$timeout" -- \
