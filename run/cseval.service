@@ -4,10 +4,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/playpen /opt/sandbox --mount-proc --user=eval --devices=/dev/urandom:r,/dev/null:rw --memory-limit=128 --syscalls-file=mono_syscalls -- /usr/bin/mono /usr/local/lib/evalbot/cseval.exe /run/eval/cseval.sock
-WorkingDirectory=/home/eval/evalbot
-User=root
-Group=root
+ExecStart=/usr/local/lib/evalbot/run_playpen_fd dotnet_syscalls 0 /usr/bin/dotnet /usr/local/lib/evalbot_in/cseval/cseval.dll
+WorkingDirectory=/usr/local/lib/evalbot
+User=eval
+Group=eval
 Restart=always
 
 [Install]
