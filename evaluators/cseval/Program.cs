@@ -8,6 +8,11 @@ using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Reflection;
+using System.Collections.Generic;
+using Microsoft.CodeAnalysis.Scripting;
+using Microsoft.CodeAnalysis.Scripting.Hosting;
+using Microsoft.CodeAnalysis.CSharp.Scripting;
+using Microsoft.CodeAnalysis.CSharp.Scripting.Hosting;
 
 namespace cseval {
     static class Extensions {
@@ -42,6 +47,16 @@ namespace cseval {
     }
 
     class Program {
+        private static readonly ScriptOptions SCRIPT_OPTIONS = ScriptOptions.Default
+            .WithEmitDebugInformation(false).WithFilePath("replin");
+
+        private static readonly PrintOptions PRINT_OPTIONS = new PrintOptions() {
+            MaximumOutputLength = 512
+        };
+
+        private static readonly Dictionary<string, ScriptState<object>> _contexts =
+            new Dictionary<string, ScriptState<object>>();
+
         async static Task Main(string[] args) {
             Debug.Assert(Marshal.SizeOf(new RequestHeader()) == RequestHeader.Size);
             await AcceptForever(CreateSocketFromFd(3));
@@ -87,7 +102,29 @@ namespace cseval {
                 string code = Encoding.UTF8.GetString(buf, (int) h.ContextKeyLength, (int) h.CodeLength);
 
                 // TODO
-                string resp = string.Format("Context: \"{0}\"\nCode: \"{1}\"\n", conkey, code);
+                string resp = "unknown error";
+                ScriptState<object> res = _contexts.GetValueOrDefault(conkey, null);
+                try {
+                    Task<ScriptState<Object>> tres;
+                    if (res != null) {
+                        tres = res.ContinueWithAsync(code, SCRIPT_OPTIONS);
+                    } else {
+                        tres = CSharpScript.RunAsync(code, SCRIPT_OPTIONS);
+                    }
+                    res = await tres;
+                    if (res == null) {
+                        resp = "null result?";
+                    } else if (res.Exception != null) {
+                        resp = CSharpObjectFormatter.Instance.FormatException(res.Exception);
+                    } else if (res.ReturnValue != null) {
+                        resp = CSharpObjectFormatter.Instance.FormatObject(res.ReturnValue, PRINT_OPTIONS);
+                    } else {
+                        resp = "";
+                    }
+                    _contexts[conkey] = res;
+                } catch (Exception e) {
+                    resp = CSharpObjectFormatter.Instance.FormatException(e);
+                }
                 byte[] respbytes = Encoding.UTF8.GetBytes(resp);
                 await ns.WriteAsync(IntToBytes(respbytes.Length), 0, 4, CancellationToken.None).ConfigureAwait(false);
                 await ns.WriteAsync(respbytes, 0, respbytes.Length, CancellationToken.None).ConfigureAwait(false);
@@ -108,7 +145,7 @@ namespace cseval {
         // https://github.com/tmds/Tmds.Systemd/blob/master/src/Tmds.Systemd/ServiceManager.Socket.cs
 
         /*
-            ﻿Copyright 2017 Tom Deseyn <tom.deseyn@gmail.com>
+            Copyright 2017 Tom Deseyn <tom.deseyn@gmail.com>
 
             Permission is hereby granted, free of charge, to any person obtaining
             a copy of this software and associated documentation files (the
