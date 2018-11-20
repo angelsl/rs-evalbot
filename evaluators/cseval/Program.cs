@@ -48,7 +48,10 @@ namespace cseval {
 
     class Program {
         private static readonly ScriptOptions SCRIPT_OPTIONS = ScriptOptions.Default
-            .WithEmitDebugInformation(false).WithFilePath("replin");
+            .WithEmitDebugInformation(false)
+            .WithFilePath("-")
+            .AddReferences("System.Linq", "System.Collections")
+            .AddImports("System", "System.Linq", "System.Collections.Generic");
 
         private static readonly PrintOptions PRINT_OPTIONS = new PrintOptions() {
             MaximumOutputLength = 512
