@@ -134,18 +134,23 @@ impl Language {
     pub fn eval<T, U>(&self, code: T, timeout: Option<usize>, context: Option<U>) -> impl Future<Item = String, Error = String>
         where T: AsRef<str>, U: AsRef<str> {
         debug!("evaluating {}: \"{}\"", self.name, code.as_ref());
+        let timeout = match timeout {
+            Some(0) => None,
+            Some(n) => Some(n),
+            None => self.timeout
+        };
         match self.backend {
             Backend::Exec(ref lang) =>
                 Either::A(Either::A(
                     eval::exec(
                         lang.clone(),
-                        timeout.or(self.timeout),
+                        timeout,
                         self.wrap_code(code.as_ref())))),
             Backend::UnixSocket(ref lang) =>
                 Either::A(Either::B(
                     eval::unix(
                         lang.clone(),
-                        timeout.or(self.timeout),
+                        timeout,
                         context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
                         self.wrap_code(code.as_ref())))),
             _ => Either::B(futures::finished("Unimplemented".to_owned()))
