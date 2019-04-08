@@ -45,8 +45,26 @@ defmodule ElixirEval do
   defp eval(socket, context, code, bindings) do
     try do
       binding = bindings[context] || []
+
+      {:ok, capture_stdout} = StringIO.open("")
+      {:ok, capture_stderr} = StringIO.open("")
+      original_gl = Process.group_leader()
+      Process.group_leader(self(), capture_stdout)
+      original_stderr = Process.whereis(:standard_error)
+      Process.unregister(:standard_error)
+      Process.register(capture_stderr, :standard_error)
+
       {result, binding} = Code.eval_string(code, binding)
-      respond(socket, inspect(result))
+
+      Process.group_leader(self(), original_gl)
+      Process.unregister(:standard_error)
+      Process.register(original_stderr, :standard_error)
+
+      respond(
+        socket,
+        StringIO.flush(capture_stderr) <> StringIO.flush(capture_stdout) <> inspect(result)
+      )
+
       Map.put(bindings, context, binding)
     rescue
       exception ->
