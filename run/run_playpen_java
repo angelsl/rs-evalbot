@@ -7,8 +7,10 @@ exec /usr/local/lib/evalbot/playpen \
 --hostname=MISSINGNO. \
 --mount-proc --user=eval \
 --devices=/dev/urandom:r,/dev/null:rw,/dev/zero:rw \
---memory-limit=128 \
+--memory-limit=256 \
+--tasks-max=256 \
 --syscalls-file="$syscalls" \
 --timeout="$timeout" \
---no-cloexec=3 -- \
-"$@" 2>&1
+--no-cloexec=3 \
+--bringup-lo -- \
+env LANG=$LANG "$@" 2>&1

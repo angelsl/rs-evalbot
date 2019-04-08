@@ -1,0 +1,14 @@
+[Unit]
+Description=exeval
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/evalbot/run_playpen_fd elixir_syscalls 0 /usr/bin/elixir /usr/local/lib/evalbot_in/exeval.exs
+WorkingDirectory=/usr/local/lib/evalbot
+User=eval
+Group=eval
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

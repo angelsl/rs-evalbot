@@ -1,0 +1,13 @@
+[Unit]
+Description=javaeval socket
+
+[Socket]
+ListenStream=/run/eval/javaeval.sock
+ReusePort=true
+SocketUser=eval
+SocketGroup=eval
+SocketMode=0660
+Accept=false
+
+[Install]
+WantedBy=multi-user.target

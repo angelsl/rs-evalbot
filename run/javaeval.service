@@ -1,0 +1,14 @@
+[Unit]
+Description=javaeval
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/evalbot/run_playpen_java java_syscalls 0 /usr/bin/java -jar /usr/local/lib/evalbot_in/javaeval.jar
+WorkingDirectory=/usr/local/lib/evalbot
+User=eval
+Group=eval
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
