@@ -92,17 +92,17 @@ pub fn exec<'a, T>(
     timeout: Option<usize>,
     code: T) -> impl Future<Item = String, Error = String> + 'a
         where T: AsRef<[u8]> + 'a {
-    let timeout_arg = timeout
-        .map(|t| format!("{}{}", lang.timeout_prefix.as_ref().map(String::as_str).unwrap_or(""), t));
-    let timeout_arg_ref = timeout_arg.as_ref().map(String::as_str);
+    let timeout_arg = format!("{}{}",
+        lang.timeout_prefix.as_ref().map(String::as_str).unwrap_or(""),
+        timeout.unwrap_or(0));
     if let Some(path) = lang.cmdline.iter().nth(0) {
         let mut cmd = Command::new(path);
         cmd.args(lang.cmdline.iter()
             .skip(1)
-            .filter_map(|a| if a == "{TIMEOUT}" {
-                timeout_arg_ref
+            .map(|a| if a == "{TIMEOUT}" {
+                &timeout_arg
             } else {
-                Some(a.as_ref())
+                &a
             }))
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         debug!("spawning {:?}", cmd);
