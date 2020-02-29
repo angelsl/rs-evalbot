@@ -1,3 +1,6 @@
 evalbot.toml
 .*.swp
 *.bk
+*.iml
+.idea
+.vscode
