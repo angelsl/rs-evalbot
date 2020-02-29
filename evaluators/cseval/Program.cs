@@ -213,7 +213,7 @@ namespace cseval {
 
         private static ReflectionMethods LookupMethods() {
             Assembly socketAssembly = typeof(Socket).GetTypeInfo().Assembly;
-            Type safeCloseSocketType = socketAssembly.GetType("System.Net.Sockets.SafeCloseSocket");
+            Type safeCloseSocketType = socketAssembly.GetType("System.Net.Sockets.SafeSocketHandle");
             if (safeCloseSocketType == null) {
                 ThrowNotSupported(nameof(safeCloseSocketType));
             }
