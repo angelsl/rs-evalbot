@@ -115,7 +115,7 @@ fn handle_update((tgbot, update): (RcBot, Update), tgsvc: &Arc<TgSvc>) -> Result
         if let (Ok(id), Ok(wl)) = (tgbot.inner.id.read(), tgsvc.whitelist.read()) {
             if *id == Some(new_user.id) && !wl.group_ok(chat_id) {
                 tokio::spawn(nullify_future!("leaving group",
-                    tgbot.message(chat_id, format!("You or this group is not on the whitelist. Seek help. ID: {}", chat_id)).send()
+                    tgbot.message(chat_id, format!("You or this group is not on the allowlist. Please seek help. ID: {}", chat_id)).send()
                         .and_then(move |(tgbot, _)| tgbot.leave_chat(chat_id).send())));
             }
         }
@@ -131,7 +131,7 @@ fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Langua
         if group && !wl.group_ok(chat_id)
             || !group && !wl.priv_ok(chat_id) {
             tokio::spawn(nullify_future!("sending message",
-                tgbot.message(chat_id, format!("You or this group is not on the whitelist. Seek help. ID: {}", chat_id)).send()));
+                tgbot.message(chat_id, format!("You or this group is not on the allowlist. Please seek help. ID: {}", chat_id)).send()));
             return Ok(()).into_future();
         }
     } else {
