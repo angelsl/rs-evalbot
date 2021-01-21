@@ -1,18 +1,16 @@
 [package]
 name = "tgbot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["angelsl <angelsl@in04.sg>"]
-
-[features]
-unixsocket = ["evalbotlib/unixsocket"]
+edition = "2018"
 
 [dependencies]
 evalbotlib = { path = "../evalbotlib" }
-telebot = { git = "https://github.com/angelsl/telebot.git", branch = "wip" }
+telegram-bot = { git = "https://github.com/angelsl/telegram-bot.git", branch = "master" }
 serde = "1"
 serde_derive = "1"
-toml = "0.4"
-futures = "0.1"
-tokio = "0.1"
+toml = "0.5"
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 log = "0.4"
-env_logger = "0.6"
+env_logger = "0.8"
