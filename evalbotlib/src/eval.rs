@@ -1,15 +1,15 @@
-use std::process::{Command, Stdio};
 use std::io::Cursor;
+use std::os::unix::process::ExitStatusExt;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
-use std::os::unix::process::ExitStatusExt;
 
-use tokio::prelude::*;
-use tokio::prelude::future::Either;
-use tokio::timer::timeout;
-use tokio_process::CommandExt;
-use tokio::{io::{flush, read_exact, write_all}, net::unix::UnixStream};
-use bytes::{BytesMut, Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
+use log::{debug, error};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+use tokio::process::Command;
+use tokio::time;
 
 use crate::{ExecBackend, UnixSocketBackend};
 
@@ -46,7 +46,7 @@ fn strsig(sig: i32) -> &'static str {
         29 => "I/O possible",
         30 => "Power failure",
         31 => "Bad system call",
-        _ => "Unknown signal"
+        _ => "Unknown signal",
     }
 }
 
@@ -83,234 +83,167 @@ fn strsigabbrev(sig: i32) -> &'static str {
         29 => "SIGPOLL",
         30 => "SIGPWR",
         31 => "SIGSYS",
-        _ => "(unknown)"
+        _ => "(unknown)",
     }
 }
 
-pub fn exec<'a, T>(
+pub async fn exec<'a, T>(
     lang: Arc<ExecBackend>,
     timeout: Option<usize>,
-    code: T) -> impl Future<Item = String, Error = String> + 'a
-        where T: AsRef<[u8]> + 'a {
-    let timeout_arg = format!("{}{}",
-        lang.timeout_prefix.as_ref().map(String::as_str).unwrap_or(""),
-        timeout.unwrap_or(0));
+    code: T,
+) -> Result<String, String>
+where
+    T: AsRef<[u8]> + 'a,
+{
+    let timeout_arg = format!(
+        "{}{}",
+        lang.timeout_prefix
+            .as_ref()
+            .map(String::as_str)
+            .unwrap_or(""),
+        timeout.unwrap_or(0)
+    );
     if let Some(path) = lang.cmdline.iter().nth(0) {
         let mut cmd = Command::new(path);
-        cmd.args(lang.cmdline.iter()
-            .skip(1)
-            .map(|a| if a == "{TIMEOUT}" {
-                &timeout_arg
-            } else {
-                &a
-            }))
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.args(
+            lang.cmdline
+                .iter()
+                .skip(1)
+                .map(|a| if a == "{TIMEOUT}" { &timeout_arg } else { &a }),
+        )
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         debug!("spawning {:?}", cmd);
-        Either::A(cmd.spawn_async()
-            .map_err(|e| format!("failed to exec: {}", e))
-            .into_future()
-            .and_then(|mut child| {
-                child.stdin().take().ok_or_else(|| "stdin missing".to_owned()).into_future()
-                    .and_then(|stdin|
-                        write_all(stdin, code)
-                            .map_err(|e| format!("failed to write to stdin: {}", e))
-                    )
-                    .and_then(move |_| {
-                        let stdout = match child.stdout().take() {
-                            // FIXME configurable max
-                            Some(io) => Either::A(helper::read_up_to(io, vec![0u8; 1024])
-                                .map(|(_, mut v, s)| {
-                                    v.truncate(s);
-                                    v
-                                })),
-                            None => Either::B(Ok(Vec::new()).into_future()),
-                        };
-                        let stderr = match child.stderr().take() {
-                            // FIXME configurable max
-                            Some(io) => Either::A(helper::read_up_to(io, vec![0u8; 1024])
-                                .map(|(_, mut v, s)| {
-                                    v.truncate(s);
-                                    v
-                                })),
-                            None => Either::B(Ok(Vec::new()).into_future()),
-                        };
-                        child.join3(stdout, stderr)
-                    }.map_err(|e| format!("failed to wait for process: {}", e)))
-            })
-            .map_err(|e| format!("unknown error in exec: {}", e))
-            .map(|(status, stdout, stderr)| {
-                let mut r = format!("{}{}",
-                    String::from_utf8_lossy(&stderr),
-                    String::from_utf8_lossy(&stdout),
-                );
-                if !status.success() {
-                    if !r.ends_with('\n') {
-                        r.push_str("\n");
-                    }
-                    if let Some(code) = status.code() {
-                        r.push_str(&format!("exited with status {}\n", code));
-                    } else if let Some(code) = status.signal() {
-                        r.push_str(&format!("signalled with {} ({})\n", strsig(code), strsigabbrev(code)));
-                    } else {
-                        r.push_str("exited with unknown failure\n");
-                    }
-                }
-                r
-            }))
+
+        let mut child = cmd.spawn().map_err(|e| format!("failed to exec: {}", e))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "stdin missing".to_owned())?;
+        stdin
+            .write_all(code.as_ref())
+            .await
+            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| format!("failed to wait for process: {}", e))?;
+        let mut r = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        );
+        if !output.status.success() {
+            if !r.ends_with('\n') {
+                r.push_str("\n");
+            }
+            if let Some(code) = output.status.code() {
+                r.push_str(&format!("exited with status {}\n", code));
+            } else if let Some(code) = output.status.signal() {
+                r.push_str(&format!(
+                    "signalled with {} ({})\n",
+                    strsig(code),
+                    strsigabbrev(code)
+                ));
+            } else {
+                r.push_str("exited with unknown failure\n");
+            }
+        }
+        Ok(r)
     } else {
-        Either::B(Err("empty cmdline".to_owned()).into_future())
+        Err("empty cmdline".to_owned())
     }
 }
 
-macro_rules! persistent {
-    ($lang:expr, $connfut:expr, $timeout:expr, $buf:expr) => ({
-        let buf = $buf;
-        let fut = $connfut
-            .map_err(|e| format!("error connecting: {}", e))
-            .and_then(move |s| write_all(s, buf)
-                .map_err(|e| format!("error writing: {}", e)))
-            .and_then(|(s, _)| flush(s)
-                .map_err(|e| format!("error flushing: {}", e)))
-            .and_then(|s| read_exact(s, [0u8; 4])
-                .map_err(|e| format!("error reading result length: {}", e)));
-        if let Some(timeout) = $timeout {
-            Either::A(fut.timeout(Duration::from_secs(timeout as u64)))
-        } else {
-            Either::B(fut.map_err(|e| timeout::Error::inner(e)))
-        }.then(|r| match r {
-            Ok((s, lenb)) => Either::A(read_exact(s, {
-                // FIXME configurable max
-                let outlen = Cursor::new(lenb).get_u32_le().min(1024) as usize;
-                let mut buf = BytesMut::with_capacity(outlen);
-                buf.resize(outlen, 0);
-                buf
-            }).map_err(|e| format!("error reading result: {}", e))
-                .map(|(_, ref outb)| String::from_utf8_lossy(outb).into_owned())),
-            Err(e) => Either::B(if e.is_elapsed() {
-                Err("time limit exceeded".to_owned()).into_future()
-            } else {
-                Err(format!("error: {}", e)).into_future()
-            })
-        }).map_err(move |e| {
-            do_persistent_timeout(&$lang.timeout_cmdline);
-            e
-        })
-    });
-}
-
-pub fn unix<'a, T, U>(
+pub async fn unix<'a, T, U>(
     lang: Arc<UnixSocketBackend>,
     timeout: Option<usize>,
     context: Option<U>,
-    code: T) -> impl Future<Item = String, Error = String> + 'a
-        where
-            T: AsRef<[u8]>,
-            U: AsRef<[u8]> {
-    persistent!(lang,
-        UnixStream::connect(&lang.socket_addr),
-        timeout,
-        make_persistent_input(timeout, context, code))
+    code: T,
+) -> Result<String, String>
+where
+    T: AsRef<[u8]>,
+    U: AsRef<[u8]>,
+{
+    let buf = make_persistent_input(timeout, context, code);
+
+    let mut conn = UnixStream::connect(&lang.socket_addr)
+        .await
+        .map_err(|e| format!("error connecting: {}", e))?;
+    conn.write_all(&buf)
+        .await
+        .map_err(|e| format!("error writing: {}", e))?;
+    conn.flush()
+        .await
+        .map_err(|e| format!("error flushing: {}", e))?;
+
+    let mut lenb = [0u8; 4];
+    if let Some(timeout) = timeout {
+        if let Ok(res) = time::timeout(
+            Duration::from_secs(timeout as u64),
+            conn.read_exact(&mut lenb),
+        )
+        .await
+        {
+            res
+        } else {
+            drop(do_persistent_timeout(&lang.timeout_cmdline).await);
+            return Err("time limit exceeded".to_owned());
+        }
+    } else {
+        conn.read_exact(&mut lenb).await
+    }
+    .map_err(|e| format!("error reading result length: {}", e))?;
+
+    let outlen = Cursor::new(lenb).get_u32_le().min(1024) as usize;
+    let mut buf = BytesMut::with_capacity(outlen);
+    buf.resize(outlen, 0);
+    conn.read_exact(&mut buf)
+        .await
+        .map_err(|e| format!("error reading result: {}", e))?;
+
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
-fn do_persistent_timeout(cmdline: &Option<Vec<String>>) {
+async fn do_persistent_timeout(cmdline: &Option<Vec<String>>) -> Result<(), ()> {
     if let Some(cmdline) = cmdline.as_ref() {
         if let Some(path) = cmdline.iter().nth(0) {
             debug!("timeout kill: launching {:?}", cmdline);
-            tokio::spawn(Command::new(path)
+            Command::new(path)
                 .args(cmdline.iter().skip(1))
-                .spawn_async()
-                .map_err(|e| error!("failed to exec for timeout kill: {}", e))
-                .into_future()
-                .and_then(|c| c
-                    .map_err(|e| error!("failed to exec for timeout kill: {}", e)))
-                    .map(|_| ()));
+                .spawn()
+                .map_err(|e| error!("failed to exec for timeout kill: {}", e))?
+                .wait()
+                .await
+                .map_err(|e| error!("failed to exec for timeout kill: {}", e))?;
         }
     }
+
+    Ok(())
 }
 
 fn make_persistent_input<T, U>(timeout: Option<usize>, context: Option<T>, code: U) -> BytesMut
-    where
-        T: AsRef<[u8]>,
-        U: AsRef<[u8]> {
+where
+    T: AsRef<[u8]>,
+    U: AsRef<[u8]>,
+{
     let timeout = timeout.unwrap_or(0usize) as u32;
-    let contextb = context.as_ref().map(|x| x.as_ref()).unwrap_or(&super::EMPTY_U8);
+    let contextb = context
+        .as_ref()
+        .map(|x| x.as_ref())
+        .unwrap_or(&super::EMPTY_U8);
     let codeb = code.as_ref();
     let contextblen = contextb.len() as u32;
     let codeblen = codeb.len() as u32;
 
     let mut buf = BytesMut::with_capacity(12usize + contextblen as usize + codeblen as usize);
-    buf.put_u32_le(timeout*1000);
+    buf.put_u32_le(timeout * 1000);
     buf.put_u32_le(contextblen);
     buf.put_u32_le(codeblen);
     buf.put(&contextb[..contextblen as usize]);
     buf.put(&codeb[..codeblen as usize]);
     buf
-}
-
-mod helper {
-    // https://docs.rs/tokio-io/0.1.10/src/tokio_io/io/read_exact.rs.html
-
-    use std::io;
-    use std::mem;
-
-    use futures::{Poll, Future};
-
-    use tokio::io::AsyncRead;
-
-    #[derive(Debug)]
-    pub struct ReadUpTo<A, T> {
-        state: State<A, T>,
-    }
-
-    #[derive(Debug)]
-    enum State<A, T> {
-        Reading {
-            a: A,
-            buf: T,
-            pos: usize,
-        },
-        Empty,
-    }
-
-    pub fn read_up_to<A, T>(a: A, buf: T) -> ReadUpTo<A, T>
-        where A: AsyncRead,
-            T: AsMut<[u8]>,
-    {
-        ReadUpTo {
-            state: State::Reading {
-                a,
-                buf,
-                pos: 0,
-            },
-        }
-    }
-
-    impl<A, T> Future for ReadUpTo<A, T>
-        where A: AsyncRead,
-            T: AsMut<[u8]>,
-    {
-        type Item = (A, T, usize);
-        type Error = io::Error;
-
-        fn poll(&mut self) -> Poll<(A, T, usize), io::Error> {
-            match self.state {
-                State::Reading { ref mut a, ref mut buf, ref mut pos } => {
-                    let buf = buf.as_mut();
-                    while *pos < buf.len() {
-                        let n = try_ready!(a.poll_read(&mut buf[*pos..]));
-                        *pos += n;
-                        if n == 0 {
-                            break;
-                        }
-                    }
-                }
-                State::Empty => panic!("poll a ReadUpTo after it's done"),
-            }
-
-            match mem::replace(&mut self.state, State::Empty) {
-                State::Reading { a, buf, pos } => Ok((a, buf, pos).into()),
-                State::Empty => panic!(),
-            }
-        }
-    }
 }

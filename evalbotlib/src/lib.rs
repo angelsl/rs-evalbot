@@ -1,26 +1,18 @@
-extern crate serde;
-#[macro_use] extern crate serde_derive;
-extern crate toml;
-extern crate tokio;
-extern crate tokio_process;
-#[macro_use] extern crate futures;
-#[macro_use] extern crate log;
-extern crate bytes;
-
 use std::collections::HashMap;
-use futures::Future;
-use futures::future::Either;
-use std::path::Path;
 use std::fmt::Display;
+use std::path::Path;
 use std::sync::Arc;
 
-pub mod util;
+use log::debug;
+use serde::{Deserialize, Serialize};
+
 mod eval;
+pub mod util;
 
 #[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
 struct EvalServiceCfg {
     timeout: usize,
-    languages: HashMap<String, LanguageCfg>
+    languages: HashMap<String, LanguageCfg>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -29,7 +21,7 @@ struct LanguageCfg {
     code_after: Option<String>,
     timeout: Option<usize>,
     #[serde(flatten)]
-    backend: BackendCfg
+    backend: BackendCfg,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -37,13 +29,13 @@ struct LanguageCfg {
 enum BackendCfg {
     Exec(ExecBackend),
     Network(NetworkBackend),
-    UnixSocket(UnixSocketBackend)
+    UnixSocket(UnixSocketBackend),
 }
 
 #[derive(Clone, Debug)]
 pub struct EvalService {
     timeout: usize,
-    languages: HashMap<String, Arc<Language>>
+    languages: HashMap<String, Arc<Language>>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -52,32 +44,32 @@ pub struct Language {
     code_before: Option<String>,
     code_after: Option<String>,
     timeout: Option<usize>,
-    backend: Backend
+    backend: Backend,
 }
 
 #[derive(Clone, PartialEq, Debug)]
 enum Backend {
     Exec(Arc<ExecBackend>),
     Network(Arc<NetworkBackend>),
-    UnixSocket(Arc<UnixSocketBackend>)
+    UnixSocket(Arc<UnixSocketBackend>),
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct ExecBackend {
     cmdline: Vec<String>,
-    timeout_prefix: Option<String>
+    timeout_prefix: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct NetworkBackend {
     network_addr: String,
-    timeout_cmdline: Option<Vec<String>>
+    timeout_cmdline: Option<Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct UnixSocketBackend {
     socket_addr: String,
-    timeout_cmdline: Option<Vec<String>>
+    timeout_cmdline: Option<Vec<String>>,
 }
 
 impl Language {
@@ -91,7 +83,7 @@ impl Language {
                 BackendCfg::Exec(x) => Backend::Exec(Arc::new(x)),
                 BackendCfg::Network(x) => Backend::Network(Arc::new(x)),
                 BackendCfg::UnixSocket(x) => Backend::UnixSocket(Arc::new(x)),
-            }
+            },
         }
     }
 }
@@ -101,22 +93,27 @@ impl EvalService {
         debug!("Loaded config: {:#?}", cfg);
         let mut new = EvalService {
             timeout: cfg.timeout,
-            languages: HashMap::new()
+            languages: HashMap::new(),
         };
         let timeout = cfg.timeout;
         for (name, lang) in cfg.languages.into_iter() {
-            new.languages.insert(name.clone(), Arc::new(Language::from(name, timeout,lang)));
+            new.languages
+                .insert(name.clone(), Arc::new(Language::from(name, timeout, lang)));
         }
         new
     }
 
-    pub fn from_toml_file<P>(path: P) -> impl Future<Item = Self, Error = String>
-        where P: AsRef<Path> + Send + Display + 'static{
-        util::decode(path).map(EvalService::fixup)
+    pub async fn from_toml_file<P>(path: P) -> Result<Self, String>
+    where
+        P: AsRef<Path> + Send + Display + 'static,
+    {
+        Ok(EvalService::fixup(util::decode(path).await?))
     }
 
     pub fn from_toml(toml: &str) -> Result<Self, String> {
-        toml::from_str(toml).map(EvalService::fixup).map_err(|x| format!("could not parse TOML: {:?}", x))
+        toml::from_str(toml)
+            .map(EvalService::fixup)
+            .map_err(|x| format!("could not parse TOML: {:?}", x))
     }
 
     pub fn langs(&self) -> impl Iterator<Item = (&str, &Arc<Language>)> {
@@ -131,29 +128,36 @@ impl EvalService {
 static EMPTY_U8: [u8; 0] = [];
 
 impl Language {
-    pub fn eval<T, U>(&self, code: T, timeout: Option<usize>, context: Option<U>) -> impl Future<Item = String, Error = String>
-        where T: AsRef<str>, U: AsRef<str> {
+    pub async fn eval<T, U>(
+        &self,
+        code: T,
+        timeout: Option<usize>,
+        context: Option<U>,
+    ) -> Result<String, String>
+    where
+        T: AsRef<str>,
+        U: AsRef<str>,
+    {
         debug!("evaluating {}: \"{}\"", self.name, code.as_ref());
         let timeout = match timeout {
             Some(0) => None,
             Some(n) => Some(n),
-            None => self.timeout
+            None => self.timeout,
         };
         match self.backend {
-            Backend::Exec(ref lang) =>
-                Either::A(Either::A(
-                    eval::exec(
-                        lang.clone(),
-                        timeout,
-                        self.wrap_code(code.as_ref())))),
-            Backend::UnixSocket(ref lang) =>
-                Either::A(Either::B(
-                    eval::unix(
-                        lang.clone(),
-                        timeout,
-                        context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
-                        self.wrap_code(code.as_ref())))),
-            _ => Either::B(futures::finished("Unimplemented".to_owned()))
+            Backend::Exec(ref lang) => {
+                eval::exec(lang.clone(), timeout, self.wrap_code(code.as_ref())).await
+            }
+            Backend::UnixSocket(ref lang) => {
+                eval::unix(
+                    lang.clone(),
+                    timeout,
+                    context.map(|x| x.as_ref().to_owned()), // FIXME copy :(
+                    self.wrap_code(code.as_ref()),
+                )
+                .await
+            }
+            _ => Ok("Unimplemented".to_owned()),
         }
     }
 
@@ -173,8 +177,6 @@ impl Language {
         code
     }
 }
-
-
 
 #[cfg(test)]
 mod test {

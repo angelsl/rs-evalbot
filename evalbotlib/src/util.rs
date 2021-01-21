@@ -1,31 +1,37 @@
-use tokio::prelude::*;
-use tokio::io::{read_to_end, write_all};
-use tokio::fs::File;
-
-use serde::{Serialize, de::DeserializeOwned};
-use std::path::Path;
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Display;
+use std::path::Path;
 
-pub fn encode<'a, 'b, T, P>(obj: &'a T, name: P) -> impl Future<Item = (), Error = String> + 'b
-    where
-        P: AsRef<Path> + Send + Display + 'static,
-        T: Serialize {
-    toml::to_string(obj).map_err(|e| format!("toml encode failed: {}", e)).into_future()
-        .and_then(|s| File::create(name)
-            .map(|f| (f, s))
-            .map_err(|x| format!("could not open file: {}", x)))
-        .and_then(|(f, toml)| write_all(f, toml.into_bytes())
-            .map_err(|x| format!("could not write to file: {}", x)))
-        .map(|_| ())
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+pub async fn encode<'a, T, P>(obj: &'a T, name: P) -> Result<(), String>
+where
+    P: AsRef<Path> + Send + Display + 'static,
+    T: Serialize,
+{
+    let toml_string = toml::to_string(obj).map_err(|e| format!("toml encode failed: {}", e))?;
+    let mut file = File::create(name)
+        .await
+        .map_err(|x| format!("could not open file: {}", x))?;
+    file.write_all(&toml_string.into_bytes())
+        .await
+        .map_err(|x| format!("could not write to file: {}", x))?;
+    Ok(())
 }
 
-pub fn decode<T, P>(name: P) -> impl Future<Item = T, Error = String>
-    where
-        P: AsRef<Path> + Send + Display + 'static,
-        T: DeserializeOwned {
-    File::open(name).map_err(|x| format!("could not open file: {}", x))
-        .and_then(|f| read_to_end(f, Vec::new())
-            .map_err(|x| format!("could not read file: {}", x)))
-        .and_then(|(_, buf)| toml::from_str(&String::from_utf8_lossy(&buf[..]))
-            .map_err(|x| format!("could not parse file: {:?}", x)))
+pub async fn decode<T, P>(name: P) -> Result<T, String>
+where
+    P: AsRef<Path> + Send + Display + 'static,
+    T: DeserializeOwned,
+{
+    let mut file = File::open(name)
+        .await
+        .map_err(|x| format!("could not open file: {}", x))?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)
+        .await
+        .map_err(|x| format!("could not read file: {}", x))?;
+    toml::from_str(&String::from_utf8_lossy(&buf[..]))
+        .map_err(|x| format!("could not parse file: {:?}", x))
 }

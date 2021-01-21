@@ -1,18 +1,17 @@
 [package]
 name = "evalbotlib"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["angelsl <angelsl@in04.sg>"]
+edition = "2018"
 
 [features]
 unixsocket = []
 
 [dependencies]
-toml = "0.4"
-serde = "1"
-serde_derive = "1"
+toml = "0.5"
+serde = { version = "1.0", features = ["derive"] }
 byteorder = "1"
-bytes = "0.4"
-tokio = "0.1"
-tokio-process = "0.2"
-futures = "0.1"
+bytes = "1"
+tokio = { version = "1", features = ["io-util", "fs", "process", "net", "time"] }
+futures = "0.3"
 log = "0.4"
