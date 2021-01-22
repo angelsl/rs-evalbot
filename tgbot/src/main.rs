@@ -1,29 +1,13 @@
-extern crate evalbotlib as backend;
-extern crate serde;
-#[macro_use] extern crate serde_derive;
-#[macro_use] extern crate log;
-extern crate toml;
-extern crate futures;
-extern crate tokio;
-extern crate telebot;
-extern crate env_logger;
+use evalbotlib::{util, EvalService, Language};
 
-use backend::{EvalService, Language, util};
-
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
-use std::borrow::Cow;
 
-use futures::{Future, Stream, IntoFuture};
-use telebot::RcBot;
-use telebot::functions::*;
-use telebot::objects::*;
-use futures::future::Either;
-
-macro_rules! nullify_future {
-    ($task:expr, $fut:expr) => ($fut.map(|_| ())
-        .or_else(|e| Ok(error!("error {}: {}", $task, e))));
-}
+use futures::{Future, StreamExt};
+use log::{debug, error, warn};
+use serde::{Deserialize, Serialize};
+use telegram_bot::*;
 
 static WHITELIST_FILENAME: &'static str = "tgwhitelist.toml";
 
@@ -32,7 +16,7 @@ struct TgCfg {
     owners: HashSet<String>,
     msg_owner_id: Option<i64>,
     bot_id: String,
-    lang_subst: HashMap<String, String>
+    lang_subst: HashMap<String, String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -40,7 +24,7 @@ struct TgWhitelist {
     priv_enabled: bool,
     group_enabled: bool,
     allowed: HashSet<i64>,
-    blocked: HashSet<i64>
+    blocked: HashSet<i64>,
 }
 
 impl TgWhitelist {
@@ -68,8 +52,8 @@ impl TgWhitelist {
         self.blocked.remove(&id);
     }
 
-    fn save<'a, 'b>(&'a self, path: &'static str) -> impl Future<Item = (), Error = ()> + 'b {
-        nullify_future!("saving whitelist", util::encode(self, path))
+    async fn save<'a>(&'a self, path: &'static str) {
+        drop(util::encode(self, path).await);
     }
 }
 
@@ -77,6 +61,7 @@ struct TgSvc {
     config: TgCfg,
     whitelist: RwLock<TgWhitelist>,
     service: EvalService,
+    api: Api,
 }
 
 fn telegram_wrap_result(s: &str, group: bool) -> String {
@@ -90,15 +75,21 @@ fn telegram_wrap_result(s: &str, group: bool) -> String {
         if group {
             cut_input = Cow::Owned(cut_input.lines().take(10).collect::<Vec<_>>().join("\n"));
         }
-        r.push_str(&cut_input
-            .replace(|c: char| c =='\u{FFFD}' || (c.is_control() && c != '\n' && c != '\t'), "")
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;"));
+        r.push_str(
+            &cut_input
+                .replace(
+                    |c: char| c == '\u{FFFD}' || (c.is_control() && c != '\n' && c != '\t'),
+                    "",
+                )
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;"),
+        );
         r.push_str("</pre>");
         if cut_input.len() + 1 // we also cut off the trailing \n
-            < input.len() {
+            < input.len()
+        {
             r.push_str("... (truncated)");
         }
         r
@@ -106,61 +97,130 @@ fn telegram_wrap_result(s: &str, group: bool) -> String {
 }
 
 fn is_from_owner(msg: &Message, tgsvc: &TgSvc) -> bool {
-    msg.from.as_ref().and_then(|u| u.username.as_ref().map(|un| tgsvc.is_owner(un))).unwrap_or(false)
+    msg.from
+        .as_ref()
+        .and_then(|u| u.username.as_ref().map(|un| tgsvc.is_owner(un)))
+        .unwrap_or(false)
 }
 
-fn handle_update((tgbot, update): (RcBot, Update), tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
+fn handle_update(update: Update, tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
+    let message = match update {
+        Update {
+            kind: UpdateKind::Message(message),
+            ..
+        } => message,
+        _ => return Ok(()),
+    };
+
+    match message.kind {
+        MessageKind::NewChatMembers {
+            data
+        } =>
+    }
+
     if let Some((chat, Some(new_user))) = update.message.map(|m| (m.chat, m.new_chat_member)) {
         let chat_id = chat.id;
         if let (Ok(id), Ok(wl)) = (tgbot.inner.id.read(), tgsvc.whitelist.read()) {
             if *id == Some(new_user.id) && !wl.group_ok(chat_id) {
-                tokio::spawn(nullify_future!("leaving group",
-                    tgbot.message(chat_id, format!("You or this group is not on the whitelist. Seek help. ID: {}", chat_id)).send()
-                        .and_then(move |(tgbot, _)| tgbot.leave_chat(chat_id).send())));
+                tokio::spawn(nullify_future!(
+                    "leaving group",
+                    tgbot
+                        .message(
+                            chat_id,
+                            format!(
+                                "You or this group is not on the whitelist. Seek help. ID: {}",
+                                chat_id
+                            )
+                        )
+                        .send()
+                        .and_then(move |(tgbot, _)| tgbot.leave_chat(chat_id).send())
+                ));
             }
         }
     }
     Ok(())
 }
 
-fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Language>, is_hash: bool)
-    -> impl Future<Item = (), Error = ()> {
+fn handle_eval(
+    tgsvc: &Arc<TgSvc>,
+    tgbot: RcBot,
+    msg: Message,
+    lang: &Arc<Language>,
+    is_hash: bool,
+) -> impl Future<Item = (), Error = ()> {
     let chat_id = msg.chat.id;
     let group = msg.chat.kind != "private";
     if let Ok(wl) = tgsvc.whitelist.read() {
-        if group && !wl.group_ok(chat_id)
-            || !group && !wl.priv_ok(chat_id) {
-            tokio::spawn(nullify_future!("sending message",
-                tgbot.message(chat_id, format!("You or this group is not on the whitelist. Seek help. ID: {}", chat_id)).send()));
+        if group && !wl.group_ok(chat_id) || !group && !wl.priv_ok(chat_id) {
+            tokio::spawn(nullify_future!(
+                "sending message",
+                tgbot
+                    .message(
+                        chat_id,
+                        format!(
+                            "You or this group is not on the whitelist. Seek help. ID: {}",
+                            chat_id
+                        )
+                    )
+                    .send()
+            ));
             return Ok(()).into_future();
         }
     } else {
         error!("Failed to acquire RwLock");
-        tokio::spawn(nullify_future!("sending message",
-                tgbot.message(chat_id, "Internal error occurred".to_owned()).send()));
+        tokio::spawn(nullify_future!(
+            "sending message",
+            tgbot
+                .message(chat_id, "Internal error occurred".to_owned())
+                .send()
+        ));
         return Ok(()).into_future();
     }
 
     let no_limit = is_hash && is_from_owner(&msg, tgsvc);
     let msg_id = msg.message_id;
-    info!("({}) evaluating from {:?}: {:?}", msg_id, msg.from, msg.text.as_ref().map(|x| x.as_str()).unwrap_or(""));
-    let code = msg.text.map(|x| {
-        let mut r = x.trim_left().to_owned();
-        r.push_str("\n");
-        r
-    }).unwrap_or_else(|| "".to_owned());
-    tokio::spawn(nullify_future!("sending message",
-        lang.eval(code, if no_limit { Some(0) } else { None }, Some(format!("tg{}", chat_id)))
-            .then(move |e| {
-                let ok = e.is_ok();
-                info!("({}) result: {:?}", msg_id, e.as_ref().map(|x| x.as_str()).unwrap_or(""));
-                let msg = tgbot.message(chat_id, e.map(|r| telegram_wrap_result(&r, group)).unwrap_or_else(|e| e));
-                if ok {
-                    msg.parse_mode(ParseMode::HTML)
-                } else {
-                    msg
-                }.reply_to_message_id(msg_id).send()
-            })));
+    info!(
+        "({}) evaluating from {:?}: {:?}",
+        msg_id,
+        msg.from,
+        msg.text.as_ref().map(|x| x.as_str()).unwrap_or("")
+    );
+    let code = msg
+        .text
+        .map(|x| {
+            let mut r = x.trim_left().to_owned();
+            r.push_str("\n");
+            r
+        })
+        .unwrap_or_else(|| "".to_owned());
+    tokio::spawn(nullify_future!(
+        "sending message",
+        lang.eval(
+            code,
+            if no_limit { Some(0) } else { None },
+            Some(format!("tg{}", chat_id))
+        )
+        .then(move |e| {
+            let ok = e.is_ok();
+            info!(
+                "({}) result: {:?}",
+                msg_id,
+                e.as_ref().map(|x| x.as_str()).unwrap_or("")
+            );
+            let msg = tgbot.message(
+                chat_id,
+                e.map(|r| telegram_wrap_result(&r, group))
+                    .unwrap_or_else(|e| e),
+            );
+            if ok {
+                msg.parse_mode(ParseMode::HTML)
+            } else {
+                msg
+            }
+            .reply_to_message_id(msg_id)
+            .send()
+        })
+    ));
 
     Ok(()).into_future()
 }
@@ -168,7 +228,7 @@ fn handle_eval(tgsvc: &Arc<TgSvc>, tgbot: RcBot, msg: Message, lang: &Arc<Langua
 #[derive(Clone, Copy)]
 enum WhitelistToggleOp {
     TogglePrivate,
-    ToggleGroup
+    ToggleGroup,
 }
 
 #[derive(Clone, Copy)]
@@ -176,11 +236,15 @@ enum WhitelistModOp {
     Allow,
     Unallow,
     Block,
-    Unblock
+    Unblock,
 }
 
-fn handle_whitelist_toggle(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message, op: WhitelistToggleOp)
-    -> impl Future<Item = (), Error = ()> {
+fn handle_whitelist_toggle(
+    me: &Arc<TgSvc>,
+    tgbot: RcBot,
+    msg: Message,
+    op: WhitelistToggleOp,
+) -> impl Future<Item = (), Error = ()> {
     if !is_from_owner(&msg, me) {
         return Either::A(Ok(()).into_future());
     }
@@ -197,25 +261,37 @@ fn handle_whitelist_toggle(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message, op: Whit
                 tokio::spawn(wl.save(WHITELIST_FILENAME));
                 format!("Group whitelist enabled: {}", wl.group_enabled)
             }
-        }
+        },
         Err(err) => {
             error!("error while acquiring RwLock: {}", err);
             "error acquiring RwLock".to_owned()
         }
     };
-    Either::B(nullify_future!("sending message", tgbot.message(msg.chat.id, resp)
-        .reply_to_message_id(msg.message_id)
-        .send()))
+    Either::B(nullify_future!(
+        "sending message",
+        tgbot
+            .message(msg.chat.id, resp)
+            .reply_to_message_id(msg.message_id)
+            .send()
+    ))
 }
 
-fn handle_whitelist_mod(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message, op: WhitelistModOp)
-    -> impl Future<Item = (), Error = ()> {
+fn handle_whitelist_mod(
+    me: &Arc<TgSvc>,
+    tgbot: RcBot,
+    msg: Message,
+    op: WhitelistModOp,
+) -> impl Future<Item = (), Error = ()> {
     if !is_from_owner(&msg, me) {
         return Either::A(Ok(()).into_future());
     }
 
-    let arg = msg.text.as_ref().and_then(|t| t.trim().split_whitespace()
-        .nth(0).and_then(|arg| arg.parse().ok()));
+    let arg = msg.text.as_ref().and_then(|t| {
+        t.trim()
+            .split_whitespace()
+            .nth(0)
+            .and_then(|arg| arg.parse().ok())
+    });
     let resp = match (arg, me.whitelist.write()) {
         (Some(id), Ok(mut wl)) => match op {
             WhitelistModOp::Allow => {
@@ -238,7 +314,7 @@ fn handle_whitelist_mod(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message, op: Whiteli
                 tokio::spawn(wl.save(WHITELIST_FILENAME));
                 format!("Unblocked {}", id)
             }
-        }
+        },
         (None, _) => "Invalid ID".to_owned(),
         (_, Err(err)) => {
             error!("error while acquiring RwLock: {}", err);
@@ -246,68 +322,48 @@ fn handle_whitelist_mod(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message, op: Whiteli
         }
     };
 
-    Either::B(nullify_future!("sending message", tgbot.message(msg.chat.id, resp)
-        .reply_to_message_id(msg.message_id)
-        .send()))
+    Either::B(nullify_future!(
+        "sending message",
+        tgbot
+            .message(msg.chat.id, resp)
+            .reply_to_message_id(msg.message_id)
+            .send()
+    ))
 }
 
-fn handle_leave(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message)
-    -> impl Future<Item = (), Error = ()> {
+fn handle_leave(me: &Arc<TgSvc>, tgbot: RcBot, msg: Message) -> impl Future<Item = (), Error = ()> {
     if !is_from_owner(&msg, me) {
         return Either::A(Ok(()).into_future());
     }
 
-    let arg = msg.text.as_ref().and_then(|t| t.trim().split_whitespace()
-        .nth(0).and_then(|arg| arg.parse().ok()));
+    let arg = msg.text.as_ref().and_then(|t| {
+        t.trim()
+            .split_whitespace()
+            .nth(0)
+            .and_then(|arg| arg.parse().ok())
+    });
     let resp = match arg {
         Some(id) => {
-            tokio::spawn(nullify_future!("leaving group", tgbot.leave_chat(id).send()));
+            tokio::spawn(nullify_future!(
+                "leaving group",
+                tgbot.leave_chat(id).send()
+            ));
             "OK"
         }
-        None => "Invalid ID"
-    }.to_owned();
+        None => "Invalid ID",
+    }
+    .to_owned();
 
-    Either::B(nullify_future!("sending message", tgbot.message(msg.chat.id, resp)
-        .reply_to_message_id(msg.message_id)
-        .send()))
+    Either::B(nullify_future!(
+        "sending message",
+        tgbot
+            .message(msg.chat.id, resp)
+            .reply_to_message_id(msg.message_id)
+            .send()
+    ))
 }
 
-impl TgSvc {
-    fn run() -> impl Future<Item = (), Error = ()> {
-        let cfgf = util::decode::<TgCfg, _>("evalbot.tg.toml")
-            .map(|cfg| {
-                debug!("Loaded config: {:?}", cfg);
-                cfg
-            })
-            .map_err(|e| {
-                error!("failed to read evalbot.tg.toml: {}", e);
-            });
-        let wlf = util::decode::<TgWhitelist, _>(WHITELIST_FILENAME).or_else(|e| {
-            warn!("failed to read whitelist: {}; using empty whitelist", e);
-            Ok(TgWhitelist {
-                priv_enabled: false,
-                group_enabled: false,
-                allowed: HashSet::new(),
-                blocked: HashSet::new(),
-            }).into_future()
-        });
-        cfgf.join(wlf).join(EvalService::from_toml_file("evalbot.toml")
-            .map_err(|e| {
-                error!("failed to read evalbot.toml: {}", e);
-            }))
-            .map(|((cfg, wl), es)| TgSvc {
-                config: cfg,
-                whitelist: RwLock::new(wl),
-                service: es
-            })
-            .and_then(TgSvc::handle)
-    }
-
-    fn handle(self) -> impl Future<Item = (), Error = ()> {
-        let bot = RcBot::new(&self.config.bot_id).expect("Failed to initialise Telegram bot");
-        let me = Arc::new(self);
-        bot.resolve_name();
-
+/*
         macro_rules! handle {
             ($cmd:expr, $handler:ident $(,$params:expr)*) => {{
                 let me = me.clone();
@@ -328,18 +384,70 @@ impl TgSvc {
             }
         }
 
-        handle!("privwl", handle_whitelist_toggle, WhitelistToggleOp::TogglePrivate);
-        handle!("groupwl", handle_whitelist_toggle, WhitelistToggleOp::ToggleGroup);
+        handle!(
+            "privwl",
+            handle_whitelist_toggle,
+            WhitelistToggleOp::TogglePrivate
+        );
+        handle!(
+            "groupwl",
+            handle_whitelist_toggle,
+            WhitelistToggleOp::ToggleGroup
+        );
         handle!("allow", handle_whitelist_mod, WhitelistModOp::Allow);
         handle!("unallow", handle_whitelist_mod, WhitelistModOp::Unallow);
         handle!("block", handle_whitelist_mod, WhitelistModOp::Block);
         handle!("unblock", handle_whitelist_mod, WhitelistModOp::Unblock);
         handle!("leave", handle_leave);
+*/
 
-        bot.get_stream()
-            .map_err(|e| error!("{}", e))
-            .for_each(move |tuple| handle_update(tuple, &me))
-            .into_future()
+impl TgSvc {
+    async fn run() -> Result<(), ()> {
+        let cfg = util::decode::<TgCfg, _>("evalbot.tg.toml")
+            .await
+            .map(|cfg| {
+                debug!("Loaded config: {:?}", cfg);
+                cfg
+            })
+            .map_err(|e| {
+                error!("failed to read evalbot.tg.toml: {}", e);
+            })?;
+        let wl = util::decode::<TgWhitelist, _>(WHITELIST_FILENAME)
+            .await
+            .or_else(|e| {
+                warn!("failed to read whitelist: {}; using empty whitelist", e);
+                Ok(TgWhitelist {
+                    priv_enabled: false,
+                    group_enabled: false,
+                    allowed: HashSet::new(),
+                    blocked: HashSet::new(),
+                })
+            })?;
+        TgSvc {
+            api: Api::new(&cfg.bot_id),
+            config: cfg,
+            whitelist: RwLock::new(wl),
+            service: EvalService::from_toml_file("evalbot.toml")
+                .await
+                .map_err(|e| {
+                    error!("failed to read evalbot.toml: {}", e);
+                })?,
+        }
+        .handle()
+        .await;
+        Ok(())
+    }
+
+    async fn handle(self) {
+        let me = Arc::new(self);
+
+        let mut stream = self.api.stream();
+        while let Some(update) = stream.next().await {
+            match update {
+                Ok(update) => drop(handle_update(update, &me)),
+                Err(error) => error!("received error: {:?}", error),
+            }
+        }
     }
 
     fn is_owner(&self, name: &str) -> bool {
@@ -347,7 +455,8 @@ impl TgSvc {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
-    tokio::run(TgSvc::run());
+    drop(TgSvc::run().await);
 }
