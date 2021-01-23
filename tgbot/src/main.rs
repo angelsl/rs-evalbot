@@ -3,6 +3,7 @@ use evalbotlib::{util, EvalService, Language};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use log::{debug, error, info, warn};
@@ -106,9 +107,9 @@ fn is_from_owner(msg: &Message, tgsvc: &TgSvc) -> bool {
 
 async fn verify_allowed(chat: &MessageChat, tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
     let group = if let MessageChat::Private(_) = chat {
-        true
-    } else {
         false
+    } else {
+        true
     };
     let wl = tgsvc.whitelist.read().await;
     let chat_id = chat.id();
@@ -120,14 +121,20 @@ async fn verify_allowed(chat: &MessageChat, tgsvc: &Arc<TgSvc>) -> Result<(), ()
                 chat_id
             ),
         ));
-        let leave_group = tgsvc.api.send(LeaveChat::new(&chat));
+        let leave_group = if group {
+            Some(tgsvc.api.send(LeaveChat::new(&chat)))
+        } else {
+            None
+        };
         tokio::spawn(async move {
             drop(send_message.await.map_err(|e| {
                 warn!("failed to send message: {}", e);
             }));
-            drop(leave_group.await.map_err(|e| {
-                warn!("failed to leave group {}: {}", chat_id, e);
-            }));
+            if let Some(leave_group) = leave_group {
+                drop(leave_group.await.map_err(|e| {
+                    warn!("failed to leave group {}: {}", chat_id, e);
+                }));
+            }
         });
         Err(())
     } else {
@@ -135,7 +142,7 @@ async fn verify_allowed(chat: &MessageChat, tgsvc: &Arc<TgSvc>) -> Result<(), ()
     }
 }
 
-async fn handle_update(update: Update, tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
+async fn handle_update(update: Update, tgsvc: Arc<TgSvc>) -> Result<(), ()> {
     let message = match update {
         Update {
             kind: UpdateKind::Message(message),
@@ -145,10 +152,11 @@ async fn handle_update(update: Update, tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
     };
 
     match message.kind {
+        MessageKind::GroupChatCreated => handle_group_created(message.chat, &tgsvc).await?,
         MessageKind::NewChatMembers { data } => {
-            handle_new_chat_members(message.chat, data, tgsvc).await?
+            handle_new_chat_members(message.chat, data, &tgsvc).await?
         }
-        MessageKind::Text { .. } => handle_message(message, tgsvc).await?,
+        MessageKind::Text { .. } => handle_message(message, &tgsvc).await?,
         _ => (),
     };
 
@@ -164,6 +172,11 @@ async fn handle_new_chat_members(
         verify_allowed(&chat, tgsvc).await?;
     }
 
+    Ok(())
+}
+
+async fn handle_group_created(chat: MessageChat, tgsvc: &Arc<TgSvc>) -> Result<(), ()> {
+    verify_allowed(&chat, tgsvc).await?;
     Ok(())
 }
 
@@ -184,7 +197,7 @@ async fn handle_message(message: Message, tgsvc: &Arc<TgSvc>) -> Result<(), ()> 
         return Ok(());
     };
 
-    let args = cmd[cmd.len()..].trim_start();
+    let args = text[cmd.len()..].trim_start();
 
     match cmd {
         "/privwl" => {
@@ -200,9 +213,9 @@ async fn handle_message(message: Message, tgsvc: &Arc<TgSvc>) -> Result<(), ()> 
         "/leave" => handle_leave(tgsvc, &message, args).await?,
         _ => {
             let (cmd, is_hash) = if cmd.ends_with('#') {
-                (&cmd[..cmd.len() - 1], true)
+                (&cmd[1..cmd.len() - 1], true)
             } else {
-                (cmd, false)
+                (&cmd[1..], false)
             };
             if let Some((_, lang)) = tgsvc.service.langs().find(|(name, _)| *name == cmd) {
                 handle_eval(tgsvc, &message, args, lang, is_hash).await?;
@@ -250,7 +263,7 @@ async fn handle_eval(
         eval_result.as_ref().map(|x| x.as_str()).unwrap_or("")
     );
     let mut request = SendMessage::new(
-        &msg.from,
+        &msg.chat,
         eval_result
             .map(|r| telegram_wrap_result(&r, is_group))
             .unwrap_or_else(|e| e),
@@ -370,54 +383,16 @@ async fn handle_leave(tgsvc: &Arc<TgSvc>, msg: &Message, args: &str) -> Result<(
 
     tokio::spawn(async move {
         if let Some(fut) = maybe_leave_chat {
-            drop(fut.await.map_err(|e| {
-                warn!("failed to leave group: {}", e);
-            }));
+            drop(fut.await.map_err(|e| warn!("failed to leave group: {}", e)));
         }
-        drop(send_response.await.map_err(|e| {
-            warn!("failed to send message: {}", e);
-        }));
+        drop(
+            send_response
+                .await
+                .map_err(|e| warn!("failed to send message: {}", e)),
+        );
     });
     Ok(())
 }
-
-/*
-        macro_rules! handle {
-            ($cmd:expr, $handler:ident $(,$params:expr)*) => {{
-                let me = me.clone();
-                bot.register(bot.new_cmd($cmd)
-                    .map_err(|e| error!("error in command processing: {}", e))
-                    .and_then(move |(tgbot, msg)| $handler(&me, tgbot, msg $(,$params)*)));
-            }};
-        }
-
-        for (name, lang) in me.service.langs() {
-            {
-                let lang = lang.clone();
-                handle!(name, handle_eval, &lang, false);
-            }
-            {
-                let lang = lang.clone();
-                handle!(&format!("{}#", name), handle_eval, &lang, true);
-            }
-        }
-
-        handle!(
-            "privwl",
-            handle_whitelist_toggle,
-            WhitelistToggleOp::TogglePrivate
-        );
-        handle!(
-            "groupwl",
-            handle_whitelist_toggle,
-            WhitelistToggleOp::ToggleGroup
-        );
-        handle!("allow", handle_whitelist_mod, WhitelistModOp::Allow);
-        handle!("unallow", handle_whitelist_mod, WhitelistModOp::Unallow);
-        handle!("block", handle_whitelist_mod, WhitelistModOp::Block);
-        handle!("unblock", handle_whitelist_mod, WhitelistModOp::Unblock);
-        handle!("leave", handle_leave);
-*/
 
 impl TgSvc {
     async fn run() -> Result<(), ()> {
@@ -427,9 +402,7 @@ impl TgSvc {
                 debug!("Loaded config: {:?}", cfg);
                 cfg
             })
-            .map_err(|e| {
-                error!("failed to read evalbot.tg.toml: {}", e);
-            })?;
+            .map_err(|e| error!("failed to read evalbot.tg.toml: {}", e))?;
         let wl = util::decode::<TgWhitelist, _>(WHITELIST_FILENAME)
             .await
             .or_else(|e| {
@@ -443,14 +416,13 @@ impl TgSvc {
             })?;
 
         let api = Api::new(&cfg.bot_id);
-        let bot_user = api.send(GetMe).await.map_err(|e| {
-            error!("failed to get bot's user info: {}", e);
-        })?;
+        let bot_user = api
+            .send(GetMe)
+            .await
+            .map_err(|e| error!("failed to get bot's user info: {}", e))?;
         let service = EvalService::from_toml_file("evalbot.toml")
             .await
-            .map_err(|e| {
-                error!("failed to read evalbot.toml: {}", e);
-            })?;
+            .map_err(|e| error!("failed to read evalbot.toml: {}", e))?;
         TgSvc {
             api: Api::new(&cfg.bot_id),
             config: cfg,
@@ -467,9 +439,14 @@ impl TgSvc {
         let me = Arc::new(self);
 
         let mut stream = me.api.stream();
+        stream
+            .timeout(Duration::from_secs(35))
+            .error_delay(Duration::from_secs(30));
         while let Some(update) = stream.next().await {
             match update {
-                Ok(update) => drop(handle_update(update, &me).await),
+                Ok(update) => {
+                    tokio::spawn(handle_update(update, me.clone()));
+                }
                 Err(error) => error!("received error: {:?}", error),
             }
         }
@@ -482,6 +459,6 @@ impl TgSvc {
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
     drop(TgSvc::run().await);
 }
