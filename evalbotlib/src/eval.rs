@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::{Buf, BufMut, BytesMut};
-use log::{debug, error};
+use log::{debug, error, trace};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::process::Command;
@@ -118,14 +118,18 @@ where
         debug!("spawning {:?}", cmd);
 
         let mut child = cmd.spawn().map_err(|e| format!("failed to exec: {}", e))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "stdin missing".to_owned())?;
-        stdin
-            .write_all(code.as_ref())
-            .await
-            .map_err(|e| format!("failed to write to stdin: {}", e))?;
+
+        {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| "stdin missing".to_owned())?;
+            stdin
+                .write_all(code.as_ref())
+                .await
+                .map_err(|e| format!("failed to write to stdin: {}", e))?;
+            drop(stdin);
+        }
 
         let output = child
             .wait_with_output()
@@ -200,11 +204,13 @@ where
 
     let outlen = Cursor::new(lenb).get_u32_le().min(1024) as usize;
     let mut buf = BytesMut::with_capacity(outlen);
+    trace!("result length: {}", outlen);
     buf.resize(outlen, 0);
     conn.read_exact(&mut buf)
         .await
         .map_err(|e| format!("error reading result: {}", e))?;
 
+    trace!("result: {:?}", buf);
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
