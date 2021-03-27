@@ -67,6 +67,7 @@ struct TgSvc {
     service: EvalService,
     api: Api,
     bot_user: User,
+    username: String,
 }
 
 fn telegram_wrap_result(s: &str, group: bool) -> String {
@@ -191,13 +192,28 @@ async fn handle_message(message: Message, tgsvc: &Arc<TgSvc>) -> Result<(), ()> 
         return Ok(());
     }
 
-    let cmd = if let Some(cmd) = text.split_whitespace().nth(0) {
-        cmd
-    } else {
-        return Ok(());
-    };
+    let (cmd, args) = {
+        let first_tok = if let Some(first_tok) = text.split_whitespace().nth(0) {
+            first_tok
+        } else {
+            return Ok(());
+        };
 
-    let args = text[cmd.len()..].trim_start();
+        let mut split = first_tok.splitn(1, '@');
+        let cmd = split.next();
+        let user = split.next();
+
+        if let Some(user) = user {
+            if user != tgsvc.username {
+                return Ok(());
+            }
+        }
+
+        (
+            cmd.expect("First split should exist"),
+            text[first_tok.len()..].trim_start(),
+        )
+    };
 
     match cmd {
         "/privwl" => {
@@ -428,6 +444,11 @@ impl TgSvc {
             config: cfg,
             whitelist: RwLock::new(wl),
             service: service,
+            username: bot_user
+                .username
+                .as_ref()
+                .expect("Bot must have username")
+                .clone(),
             bot_user: bot_user,
         }
         .handle()
