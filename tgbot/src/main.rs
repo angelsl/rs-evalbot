@@ -199,7 +199,7 @@ async fn handle_message(message: Message, tgsvc: &Arc<TgSvc>) -> Result<(), ()> 
             return Ok(());
         };
 
-        let mut split = first_tok.splitn(1, '@');
+        let mut split = first_tok.splitn(2, '@');
         let cmd = split.next();
         let user = split.next();
 
