@@ -62,7 +62,7 @@ namespace cseval {
 
         async static Task Main(string[] args) {
             Debug.Assert(Marshal.SizeOf(new RequestHeader()) == RequestHeader.Size);
-            await AcceptForever(CreateSocketFromFd(3));
+            await AcceptForever(new Socket(new SafeSocketHandle(new IntPtr(3), true)));
         }
 
         async static Task AcceptForever(Socket socket) {
@@ -142,133 +142,6 @@ namespace cseval {
                 *((int*) rp) = n;
             }
             return r;
-        }
-
-        // Following methods adapted from
-        // https://github.com/tmds/Tmds.Systemd/blob/master/src/Tmds.Systemd/ServiceManager.Socket.cs
-
-        /*
-            Copyright 2017 Tom Deseyn <tom.deseyn@gmail.com>
-
-            Permission is hereby granted, free of charge, to any person obtaining
-            a copy of this software and associated documentation files (the
-            "Software"), to deal in the Software without restriction, including
-            without limitation the rights to use, copy, modify, merge, publish,
-            distribute, sublicense, and/or sell copies of the Software, and to
-            permit persons to whom the Software is furnished to do so, subject to
-            the following conditions:
-
-            The above copyright notice and this permission notice shall be
-            included in all copies or substantial portions of the Software.
-
-            THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-            EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-            MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-            IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-            CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-            TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-            SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-        */
-
-        static ReflectionMethods reflectionMethods;
-
-        static Program() {
-            reflectionMethods = LookupMethods();
-        }
-
-        static Socket CreateSocketFromFd(int fd) {
-            // static unsafe SafeCloseSocket CreateSocket(IntPtr fileDescriptor)
-            var fileDescriptor = new IntPtr(fd);
-            var safeCloseSocket = reflectionMethods.SafeCloseSocketCreate.Invoke(null, new object [] { fileDescriptor });
-
-            // private Socket(SafeCloseSocket fd)
-            var socket = reflectionMethods.SocketConstructor.Invoke(new[] { safeCloseSocket });
-
-            // private bool _isListening = false;
-            reflectionMethods.IsListening.SetValue(socket, true);
-
-            // internal EndPoint _rightEndPoint;
-            reflectionMethods.RightEndPoint.SetValue(socket,
-                (EndPoint) reflectionMethods.UnixDomainSocketEndPointConstructor.Invoke(new[] { "/" }));
-            // private AddressFamily _addressFamily;
-            reflectionMethods.AddressFamily.SetValue(socket, AddressFamily.Unix);
-            // private SocketType _socketType;
-            reflectionMethods.SocketType.SetValue(socket, SocketType.Stream);
-            // private ProtocolType _protocolType;
-            reflectionMethods.ProtocolType.SetValue(socket, ProtocolType.Unspecified);
-
-            return (Socket)socket;
-        }
-
-        private class ReflectionMethods {
-            public MethodInfo SafeCloseSocketCreate;
-            public ConstructorInfo SocketConstructor;
-            public FieldInfo RightEndPoint;
-            public FieldInfo IsListening;
-            public FieldInfo SocketType;
-            public FieldInfo AddressFamily;
-            public FieldInfo ProtocolType;
-            public ConstructorInfo UnixDomainSocketEndPointConstructor;
-        }
-
-        private static ReflectionMethods LookupMethods() {
-            Assembly socketAssembly = typeof(Socket).GetTypeInfo().Assembly;
-            Type safeCloseSocketType = socketAssembly.GetType("System.Net.Sockets.SafeSocketHandle");
-            if (safeCloseSocketType == null) {
-                ThrowNotSupported(nameof(safeCloseSocketType));
-            }
-            MethodInfo safeCloseSocketCreate = safeCloseSocketType.GetTypeInfo().GetMethod("CreateSocket", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public, null, new[] { typeof(IntPtr) }, null);
-            if (safeCloseSocketCreate == null) {
-                ThrowNotSupported(nameof(safeCloseSocketCreate));
-            }
-            ConstructorInfo socketConstructor = typeof(Socket).GetTypeInfo().GetConstructor(BindingFlags.Public | BindingFlags.NonPublic| BindingFlags.Instance, null, new[] { safeCloseSocketType }, null);
-            if (socketConstructor == null) {
-                ThrowNotSupported(nameof(socketConstructor));
-            }
-            FieldInfo rightEndPoint = typeof(Socket).GetTypeInfo().GetField("_rightEndPoint", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (rightEndPoint == null) {
-                ThrowNotSupported(nameof(rightEndPoint));
-            }
-            FieldInfo isListening = typeof(Socket).GetTypeInfo().GetField("_isListening", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (isListening == null) {
-                ThrowNotSupported(nameof(isListening));
-            }
-            FieldInfo socketType = typeof(Socket).GetTypeInfo().GetField("_socketType", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (socketType == null) {
-                ThrowNotSupported(nameof(socketType));
-            }
-            FieldInfo addressFamily = typeof(Socket).GetTypeInfo().GetField("_addressFamily", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (addressFamily == null) {
-                ThrowNotSupported(nameof(addressFamily));
-            }
-            FieldInfo protocolType = typeof(Socket).GetTypeInfo().GetField("_protocolType", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (protocolType == null) {
-                ThrowNotSupported(nameof(protocolType));
-            }
-
-            // .NET Core 2.1+
-            Type unixDomainSocketEndPointType = socketAssembly.GetType("System.Net.Sockets.UnixDomainSocketEndPoint");
-            if (unixDomainSocketEndPointType == null) {
-                ThrowNotSupported(nameof(unixDomainSocketEndPointType));
-            }
-            ConstructorInfo unixDomainSocketEndPointConstructor = unixDomainSocketEndPointType.GetTypeInfo().GetConstructor(BindingFlags.Public | BindingFlags.NonPublic| BindingFlags.Instance, null, new[] { typeof(string) }, null);
-            if (unixDomainSocketEndPointConstructor == null) {
-                ThrowNotSupported(nameof(unixDomainSocketEndPointConstructor));
-            }
-            return new ReflectionMethods {
-                SafeCloseSocketCreate = safeCloseSocketCreate,
-                SocketConstructor = socketConstructor,
-                RightEndPoint = rightEndPoint,
-                IsListening = isListening,
-                SocketType = socketType,
-                AddressFamily = addressFamily,
-                ProtocolType = protocolType,
-                UnixDomainSocketEndPointConstructor = unixDomainSocketEndPointConstructor
-            };
-        }
-
-        private static void ThrowNotSupported(string var) {
-            throw new NotSupportedException($"Creating a Socket from a file descriptor is not supported on this platform. '{var}' not found.");
         }
     }
 }
