@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 evalbotlib = { path = "../evalbotlib" }
-telegram-bot = { git = "https://github.com/angelsl/telegram-bot.git", branch = "master" }
+telegram-bot = { git = "https://github.com/telegram-rs/telegram-bot.git", branch = "main" }
 serde = "1"
 serde_derive = "1"
 toml = "0.5"
